@@ -1,9 +1,10 @@
+attribute vec2 textureCoordinatesUnit;
 attribute vec4 positionHighAndScale;
 attribute vec4 positionLowAndRotation;   
 attribute vec4 compressedAttribute0;        // pixel offset, translate, horizontal origin, vertical origin, show, texture coordinates, direction
 attribute vec4 compressedAttribute1;        // aligned axis, translucency by distance, image width
 attribute vec4 compressedAttribute2;        // image height, color, pick color, 2 bytes free
-attribute vec3 eyeOffset;                   // eye offset in meters
+attribute vec4 eyeOffset;                   // eye offset in meters
 attribute vec4 scaleByDistance;             // near, nearScale, far, farScale
 attribute vec4 pixelOffsetScaleByDistance;  // near, nearScale, far, farScale
 
@@ -102,10 +103,6 @@ void main()
     float show = floor(compressed * SHIFT_RIGHT2);
     compressed -= show * SHIFT_LEFT2;
     
-    vec2 direction;
-    direction.x = floor(compressed * SHIFT_RIGHT1);
-    direction.y = compressed - direction.x * SHIFT_LEFT1;
-    
     float temp = compressedAttribute0.y  * SHIFT_RIGHT8;
     pixelOffset.y = -(floor(temp) - UPPER_BOUND);
     
@@ -117,8 +114,12 @@ void main()
     
     translate.y += (temp - floor(temp)) * SHIFT_LEFT8;
     translate.y -= UPPER_BOUND;
-    
-    vec2 textureCoordinates = czm_decompressTextureCoordinates(compressedAttribute0.w);
+
+    vec2 direction = textureCoordinatesUnit;
+
+    vec2 textureCoordinatesBottomLeft = czm_decompressTextureCoordinates(compressedAttribute0.w);
+    vec2 textureCoordinatesRange = czm_decompressTextureCoordinates(eyeOffset.w);
+    vec2 textureCoordinates = textureCoordinatesBottomLeft + textureCoordinatesUnit * textureCoordinatesRange;
     
     temp = compressedAttribute1.x * SHIFT_RIGHT8;
     
@@ -168,7 +169,7 @@ void main()
     
     vec4 p = czm_translateRelativeToEye(positionHigh, positionLow);
     vec4 positionEC = czm_modelViewRelativeToEye * p;
-    positionEC = czm_eyeOffset(positionEC, eyeOffset);
+    positionEC = czm_eyeOffset(positionEC, eyeOffset.xyz);
     positionEC.xyz *= show;
     
     ///////////////////////////////////////////////////////////////////////////     

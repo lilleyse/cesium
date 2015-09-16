@@ -860,6 +860,7 @@ define([
             offset = offset * indexBuffer.bytesPerIndex; // offset in vertices to offset in bytes
             count = defaultValue(count, indexBuffer.numberOfIndices);
             if (instanceCount === 1) {
+                debugger;
                 context._gl.drawElements(primitiveType, count, indexBuffer.indexDatatype, offset);
             } else {
                 context._instancedArrays.drawElementsInstancedANGLE(primitiveType, count, indexBuffer.indexDatatype, offset, instanceCount);

@@ -24,7 +24,7 @@ define([
     /**
      * @private
      */
-    var VertexArrayFacade = function(context, attributes, sizeInVertices) {
+    var VertexArrayFacade = function(context, attributes, sizeInVertices, instanceCount) {
         //>>includeStart('debug', pragmas.debug);
         if (!context) {
             throw new DeveloperError('context is required.');
@@ -35,7 +35,7 @@ define([
         //>>includeEnd('debug');
 
         var attrs = VertexArrayFacade._verifyAttributes(attributes);
-        sizeInVertices = sizeInVertices || 0;
+        sizeInVertices = defaultValue(sizeInVertices, 0);
         var precreatedAttributes = [];
         var attributesByUsage = {};
         var attributesForUsage;
@@ -53,7 +53,8 @@ define([
                 continue;
             }
 
-            usage = attribute.usage;
+            // usage depends on the buffer usage and whether the attribute is instanced
+            usage = attribute.usage.toString() + attribute.instanceDivisor.toString();
             attributesForUsage = attributesByUsage[usage];
             if (!defined(attributesForUsage)) {
                 attributesForUsage = attributesByUsage[usage] = [];
@@ -68,8 +69,6 @@ define([
             return ComponentDatatype.getSizeInBytes(right.componentDatatype) - ComponentDatatype.getSizeInBytes(left.componentDatatype);
         }
 
-        // Create a buffer description for each usage.
-        this._buffersByUsage = {};
         this._allBuffers = [];
 
         for (usage in attributesByUsage) {
@@ -79,36 +78,30 @@ define([
                 attributesForUsage.sort(compare);
                 var vertexSizeInBytes = VertexArrayFacade._vertexSizeInBytes(attributesForUsage);
 
-                var usageEnum;
-                switch (Number(usage)) {
-                case BufferUsage.STATIC_DRAW:
-                    usageEnum = BufferUsage.STATIC_DRAW;
-                    break;
-                case BufferUsage.STREAM_DRAW:
-                    usageEnum = BufferUsage.STREAM_DRAW;
-                    break;
-                case BufferUsage.DYNAMIC_DRAW:
-                    usageEnum = BufferUsage.DYNAMIC_DRAW;
-                    break;
-                }
+                var bufferUsage = attributesForUsage[0].usage;
+                var instanceDivisor = attributesForUsage[0].instanceDivisor;
 
                 var buffer = {
                     vertexSizeInBytes : vertexSizeInBytes,
+                    sizeInBytes : 0,
 
                     vertexBuffer : undefined,
-                    usage : usageEnum,
+                    usage : bufferUsage,
+                    instanceDivisor : instanceDivisor,
+
                     needsCommit : false,
 
                     arrayBuffer : undefined,
                     arrayViews : VertexArrayFacade._createArrayViews(attributesForUsage, vertexSizeInBytes)
                 };
 
-                this._buffersByUsage[usage] = buffer;
                 this._allBuffers.push(buffer);
             }
         }
 
         this._size = 0;
+        this._instanceCount = 0;
+        this._instanceSize = 0; // number of vertices in each instance
 
         this._precreated = precreatedAttributes;
         this._context = context;
@@ -116,7 +109,7 @@ define([
         this.writers = undefined;
         this.va = undefined;
 
-        this.resize(sizeInVertices);
+        this.resize(sizeInVertices, instanceCount);
     };
 
     VertexArrayFacade._verifyAttributes = function(attributes) {
@@ -129,8 +122,9 @@ define([
                 index : defaultValue(attribute.index, i),
                 enabled : defaultValue(attribute.enabled, true),
                 componentsPerAttribute : attribute.componentsPerAttribute,
-                componentDatatype : attribute.componentDatatype || ComponentDatatype.FLOAT,
-                normalize : attribute.normalize || false,
+                componentDatatype : defaultValue(attribute.componentDatatype, ComponentDatatype.FLOAT),
+                normalize : defaultValue(attribute.normalize, false),
+                instanceDivisor : defaultValue(attribute.instanceDivisor, 0),
 
                 // There will be either a vertexBuffer or an [optional] usage.
                 vertexBuffer : attribute.vertexBuffer,
@@ -214,15 +208,20 @@ define([
     /**
      * Invalidates writers.  Can't render again until commit is called.
      */
-    VertexArrayFacade.prototype.resize = function(sizeInVertices) {
-        this._size = sizeInVertices;
+    VertexArrayFacade.prototype.resize = function(sizeInVertices, instanceCount) {
+        this._instanceCount = defaultValue(instanceCount, 1);
+        this._instanceSize = sizeInVertices;
+        this._size = this._instanceSize * this._instanceCount;
 
         var allBuffers = this._allBuffers;
         this.writers = [];
 
         for (var i = 0, len = allBuffers.length; i < len; ++i) {
             var buffer = allBuffers[i];
-            VertexArrayFacade._resize(buffer, this._size);
+
+            // If the buffer contains instanced attributes, the number of vertices is equal to the number of instances.
+            var bufferSize = (buffer.instanceDivisor === 0) ? this._size : (this._instanceCount / buffer.instanceDivisor);
+            VertexArrayFacade._resize(buffer, bufferSize);
 
             // Reserving invalidates the writers, so if client's cache them, they need to invalidate their cache.
             VertexArrayFacade._appendWriters(this.writers, buffer);
@@ -235,7 +234,8 @@ define([
     VertexArrayFacade._resize = function(buffer, size) {
         if (buffer.vertexSizeInBytes > 0) {
             // Create larger array buffer
-            var arrayBuffer = new ArrayBuffer(size * buffer.vertexSizeInBytes);
+            var sizeInBytes = size * buffer.vertexSizeInBytes;
+            var arrayBuffer = new ArrayBuffer(sizeInBytes);
 
             // Copy contents from previous array buffer
             if (defined(buffer.arrayBuffer)) {
@@ -256,6 +256,7 @@ define([
             }
 
             buffer.arrayBuffer = arrayBuffer;
+            buffer.sizeInBytes = sizeInBytes;
         }
     };
 
@@ -315,8 +316,10 @@ define([
 
         var allBuffers = this._allBuffers;
         var buffer;
+        var i;
+        var length;
 
-        for (var i = 0, len = allBuffers.length; i < len; ++i) {
+        for (i = 0, length = allBuffers.length; i < length; ++i) {
             buffer = allBuffers[i];
             recreateVA = commit(this, buffer) || recreateVA;
         }
@@ -324,19 +327,19 @@ define([
         ///////////////////////////////////////////////////////////////////////
 
         if (recreateVA || !defined(this.va)) {
-            var buffersByUsage = this._buffersByUsage;
-
             destroyVA(this);
             var va = this.va = [];
 
             var numberOfVertexArrays = defined(indexBuffer) ? Math.ceil(this._size / CesiumMath.SIXTY_FOUR_KILOBYTES) : 1;
             for ( var k = 0; k < numberOfVertexArrays; ++k) {
                 var attributes = [];
-                for (var usage in buffersByUsage) {
-                    if (buffersByUsage.hasOwnProperty(usage)) {
-                        buffer = buffersByUsage[usage];
-                        VertexArrayFacade._appendAttributes(attributes, buffer, k * (buffer.vertexSizeInBytes * CesiumMath.SIXTY_FOUR_KILOBYTES));
+                for (i = 0, length = allBuffers.length; i < length; ++i) {
+                    buffer = allBuffers[i];
+                    var offset = k * (buffer.vertexSizeInBytes * CesiumMath.SIXTY_FOUR_KILOBYTES);
+                    if (buffer.instanceDivisor > 0) {
+                        offset = offset / (buffer.instanceDivisor * this._instanceSize);
                     }
+                    VertexArrayFacade._appendAttributes(attributes, buffer, offset);
                 }
 
                 attributes = attributes.concat(this._precreated);
@@ -348,7 +351,7 @@ define([
                         indexBuffer : indexBuffer
                     }),
                     indicesCount : 1.5 * ((k !== (numberOfVertexArrays - 1)) ? CesiumMath.SIXTY_FOUR_KILOBYTES : (this._size % CesiumMath.SIXTY_FOUR_KILOBYTES))
-                // TODO: not hardcode 1.5, this assumes 6 indicies per 4 vertices (as for Billboard quads).
+                // TODO: not hardcode 1.5, this assumes 6 indices per 4 vertices (as for Billboard quads).
                 });
             }
         }
@@ -359,9 +362,8 @@ define([
             buffer.needsCommit = false;
 
             var vertexBuffer = buffer.vertexBuffer;
-            var vertexBufferSizeInBytes = vertexArrayFacade._size * buffer.vertexSizeInBytes;
             var vertexBufferDefined = defined(vertexBuffer);
-            if (!vertexBufferDefined || (vertexBuffer.sizeInBytes < vertexBufferSizeInBytes)) {
+            if (!vertexBufferDefined || (vertexBuffer.sizeInBytes < buffer.sizeInBytes)) {
                 if (vertexBufferDefined) {
                     vertexBuffer.destroy();
                 }
@@ -395,7 +397,8 @@ define([
                 normalize : view.normalize,
                 vertexBuffer : buffer.vertexBuffer,
                 offsetInBytes : vertexBufferOffset + view.offsetInBytes,
-                strideInBytes : buffer.vertexSizeInBytes
+                strideInBytes : buffer.vertexSizeInBytes,
+                instanceDivisor : buffer.instanceDivisor
             });
         }
     };
@@ -412,6 +415,12 @@ define([
 
         var allBuffers = this._allBuffers;
         for (var i = 0, len = allBuffers.length; i < len; ++i) {
+            var buffer = allBuffers[i];
+            if (buffer.instanceDivisor > 0) {
+                // what if instanceDivisor is >= 2?
+                offsetInVertices = offsetInVertices / this._instanceSize;
+                lengthInVertices = lengthInVertices / this._instanceSize;
+            }
             subCommit(allBuffers[i], offsetInVertices, lengthInVertices);
         }
     };
@@ -442,7 +451,6 @@ define([
         if (!defined(va)) {
             return;
         }
-
 
         var length = va.length;
         for (var i = 0; i < length; ++i) {
