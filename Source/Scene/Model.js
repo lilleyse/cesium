@@ -529,9 +529,10 @@ define([
         this._loadError = undefined;
         this._loadResources = undefined;
 
-        this._perNodeShowDirty = false;             // true when the Cesium API was used to change a node's show property
+        this._perNodeShowDirty = false;            // true when the Cesium API was used to change a node's show property
         this._cesiumAnimationsDirty = false;       // true when the Cesium API, not a glTF animation, changed a node transform
         this._maxDirtyNumber = 0;                  // Used in place of a dirty boolean flag to avoid an extra graph traversal
+        this._dirty = false;                       // true when the model is targeted for animation this frame
 
         this._runtime = {
             animations : undefined,
@@ -2979,6 +2980,7 @@ define([
         }
 
         ++model._maxDirtyNumber;
+        model._dirty = true;
     }
 
     var scratchObjectSpace = new Matrix4();
@@ -3329,6 +3331,7 @@ define([
         if ((show && this._state === ModelState.LOADED) || justLoaded) {
             var animated = this.activeAnimations.update(frameState) || this._cesiumAnimationsDirty;
             this._cesiumAnimationsDirty = false;
+            this._dirty = false;
 
             // Model's model matrix needs to be updated
             var modelTransformChanged = !Matrix4.equals(this._modelMatrix, this.modelMatrix) ||

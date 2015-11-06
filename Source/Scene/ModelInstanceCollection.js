@@ -755,8 +755,6 @@ define([
         };
     }
 
-    var emptyCommandList = [];
-
     ModelInstanceCollection.prototype.update = function(frameState) {
         if (frameState.mode !== SceneMode.SCENE3D) {
             return;
@@ -785,13 +783,9 @@ define([
         }
 
         var model = this._model;
-        var savedCommands = frameState.commandList;
-        frameState.commandList = emptyCommandList;
 
+        // Update loads model resources and updates animations, it does not push commands due to ignoreCommands being set
         model.update(frameState);
-
-        frameState.commandList = savedCommands;
-        emptyCommandList.length = 0;
 
         if (model.ready && (this._state === LoadState.LOADING)) {
             this._state = LoadState.LOADED;
@@ -810,7 +804,7 @@ define([
 
         // If any node changes due to an animation, update the commands. This could be inefficient if the model is
         // composed of many nodes and only one changes, however it is probably fine in the general use case.
-        if (model._maxDirtyNumber > 0) {
+        if (model._dirty) {
             updateCommands(this);
         }
 
