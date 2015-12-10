@@ -59,11 +59,47 @@ define([
         expectRender(scene, tileset);
     };
 
+    function getTiles(tileset) {
+        var tiles = [];
+        var stack = [tileset._root];
+        while (stack.length > 0) {
+            var tile = stack.pop();
+            tiles.push(tile);
+            var children = tile.children;
+            var length = children.length;
+            for (var i = 0; i < length; ++i) {
+                stack.push(children[i]);
+            }
+        }
+        return tiles;
+    }
+
     Cesium3DTilesTester.loadTileset = function(scene, url) {
         var tileset = scene.primitives.add(new Cesium3DTileset({
             url : url
         }));
+        return tileset.readyPromise.then(function(tileset) {
+            var tiles = getTiles(tileset);
+            var length = tiles.length;
+            return pollToPromise(function() {
+                // Render scene to progressively load the tiles
+                scene.renderForSpecs();
+                for (var i = 0; i < length; ++i) {
+                    if (!tiles[i].isReady()) {
+                        return false;
+                    }
+                }
+                return true;
+            }).then(function() {
+                return tileset;
+            });
+        });
+    };
 
+    Cesium3DTilesTester.loadTilesetRoot = function(scene, url) {
+        var tileset = scene.primitives.add(new Cesium3DTileset({
+            url : url
+        }));
         return pollToPromise(function() {
             // Render scene to progressively load the content
             scene.renderForSpecs();
