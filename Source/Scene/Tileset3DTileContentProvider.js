@@ -44,6 +44,7 @@ define([
             that.state = Cesium3DTileContentState.READY;
             that.readyPromise.resolve(that);
         }).otherwise(function(error) {
+            console.log('asdasdasd');
             that.state = Cesium3DTileContentState.FAILED;
             that.readyPromise.reject(error);
         });

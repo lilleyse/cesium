@@ -58,7 +58,11 @@ define([
         this.state = Cesium3DTileContentState.LOADING;
 
         loadArrayBuffer(this._url).then(function(arrayBuffer) {
-            that.initialize(arrayBuffer);
+            if (!that.isDestroyed()) {
+                that.initialize(arrayBuffer);
+            } else {
+                that.readyPromise.reject();
+            }
         }).otherwise(function(error) {
             that.state = Cesium3DTileContentState.FAILED;
             that.readyPromise.reject(error);

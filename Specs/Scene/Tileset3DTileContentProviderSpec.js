@@ -1,13 +1,13 @@
 /*global defineSuite*/
 defineSuite([
-        'Scene/Tileset3dTileContentProvider',
+        'Scene/Tileset3DTileContentProvider',
         'Core/Cartesian3',
         'Core/HeadingPitchRange',
         'Scene/Cesium3DTileContentState',
         'Specs/Cesium3DTilesTester',
         'Specs/createScene'
     ], function(
-        Tileset3dTileContentProvider,
+        Tileset3DTileContentProvider,
         Cartesian3,
         HeadingPitchRange,
         Cesium3DTileContentState,
@@ -48,4 +48,9 @@ defineSuite([
     it('destroys', function() {
         return Cesium3DTilesTester.tileDestroys(scene, tilesetOfTilesetsUrl);
     });
+
+    it('destroys before loading finishes', function() {
+        return Cesium3DTilesTester.tileDestroysBeforeLoad(scene, tilesetOfTilesetsUrl);
+    });
+
 });
