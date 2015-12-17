@@ -339,8 +339,7 @@ define([
     function selectTile(selectedTiles, tile, fullyVisible, frameState) {
         // There may also be a tight box around just the tile's contents, e.g., for a city, we may be
         // zoomed into a neighborhood and can cull the skyscrapers in the root node.
-        var parentRefines = defined(tile.parent) ? tile.parent.isRefinable() : true;
-        if (tile.isReady() && parentRefines &&
+        if (tile.isReady() && tile.hasContent &&
                 (fullyVisible || (tile.contentsVisibility(frameState.cullingVolume) !== CullingVolume.MASK_OUTSIDE))) {
             selectedTiles.push(tile);
         }
@@ -494,8 +493,9 @@ define([
 // TODO: we could spin a bit less CPU here and probably above by keeping separate lists for unloaded/ready children.
                                 if (child.isContentUnloaded()) {
                                     requestContent(tiles3D, child, outOfCore);
-                                } else if (!child.isRefinable()) {
-                                    // Child needs to load its children in order to become refinable
+                                } else if (!child.hasContent) {
+                                    // In the case of empty child tiles used to accelerate culling, its descendants
+                                    // with content need to be loaded before the tile is able to refine
                                     child.parentPlaneMask = planeMask;
                                     stack.push(child);
                                 }
