@@ -41,6 +41,9 @@ defineSuite([
     var tilesetReplacement1Url = './Data/Cesium3DTiles/Tilesets/TilesetReplacement1/';
     var tilesetReplacement2Url = './Data/Cesium3DTiles/Tilesets/TilesetReplacement2/';
 
+    // 3 level tree with mix of additive and replacement refinement
+    var tilesetRefinementMix = './Data/Cesium3DTiles/Tilesets/TilesetRefinementMix/';
+
     // tiles.json : root content points to tiles2.json
     // tiles2.json: root with b3dm content, three children with b3dm content, one child points to tiles3.json
     // tiles3.json: root with b3dm content
@@ -419,6 +422,20 @@ defineSuite([
         });
     });
 
+    it('replacement and additive refinement', function() {
+        //          A
+        //      A       R (not rendered)
+        //    R   A   R   A
+        //
+        return Cesium3DTilesTester.loadTileset(scene, tilesetRefinementMix).then(function(tileset) {
+            scene.renderForSpecs();
+
+            var stats = tileset._statistics;
+            expect(stats.visited).toEqual(7);
+            expect(stats.numberOfCommands).toEqual(6);
+        });
+    });
+
     it('loads tileset with external tiles.json', function() {
         // Set view so that no tiles are loaded initially
         viewNothing();
@@ -475,14 +492,51 @@ defineSuite([
     });
 
     it('debugShowStatistics', function() {
+        spyOn(console, 'log');
+
         return Cesium3DTilesTester.loadTileset(scene, tilesetUrl).then(function(tileset) {
             tileset.debugShowStatistics = true;
             scene.renderForSpecs();
-            // TODO : not sure how to test this
+            expect(console.log).toHaveBeenCalled();
         });
     });
 
-    it('does not request tiles when out of core', function() {
+    it('debugColorizeTiles', function() {
+        // More precise test is in Cesium3DTileBatchTableResourcesSpec
+        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl).then(function(tileset) {
+            viewRootOnly();
+            tileset.debugColorizeTiles = true;
+            scene.renderForSpecs();
+            var stats = tileset._statistics;
+            expect(stats.visited).toEqual(1);
+            expect(stats.numberOfCommands).toEqual(1);
+        });
+    });
+
+    it('debugShowBoundingVolume', function() {
+        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl).then(function(tileset) {
+            viewRootOnly();
+            tileset.debugShowBoundingVolume = true;
+            scene.renderForSpecs();
+            var stats = tileset._statistics;
+            expect(stats.visited).toEqual(1);
+            expect(stats.numberOfCommands).toEqual(2); // Tile command + bounding volume command
+        });
+    });
+
+    it('debugShowContentBoundingVolume', function() {
+        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl).then(function(tileset) {
+            viewRootOnly();
+            // TODO : remove 's' when #3325 is merged in
+            tileset.debugShowContentsBoundingVolume = true;
+            scene.renderForSpecs();
+            var stats = tileset._statistics;
+            expect(stats.visited).toEqual(1);
+            expect(stats.numberOfCommands).toEqual(2); // Tile command + bounding volume command
+        });
+    });
+
+    it('does not request tiles when picking', function() {
         viewNothing();
         return Cesium3DTilesTester.loadTileset(scene, tilesetUrl).then(function(tileset) {
             viewRootOnly();
@@ -493,7 +547,7 @@ defineSuite([
         });
     });
 
-    it('does not process tiles when out of core', function() {
+    it('does not process tiles when picking', function() {
         var spy = spyOn(Cesium3DTile.prototype, 'process').and.callThrough();
 
         viewNothing();
@@ -585,8 +639,11 @@ defineSuite([
             url : tilesetUrl
         }));
         scene.primitives.remove(tileset);
-        // TODO : hard to test this one (check that promise never resolves or rejects?)
-        // Should destroy function reject ready promise?
+        return tileset.readyPromise.then(function(tileset) {
+            fail('should not resolve');
+        }).otherwise(function(error) {
+            expect(error).toEqual('tileset is destroyed');
+        });
     });
 
     it('destroys before external tiles.json finishes loading', function() {
