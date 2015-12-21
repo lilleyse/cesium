@@ -64,6 +64,9 @@ define([
             scene.renderForSpecs();
             var stats = tileset._statistics;
             return ((stats.numberOfPendingRequests === 0) && (stats.numberProcessing === 0));
+        }).then(function() {
+            scene.renderForSpecs();
+            return tileset;
         });
     };
 
@@ -77,7 +80,6 @@ define([
             var root = tileset._root;
             root.refine = defaultValue(refine, root.refine);
             return Cesium3DTilesTester.waitForPendingRequests(scene, tileset).then(function() {
-                scene.renderForSpecs();
                 return tileset;
             });
         });

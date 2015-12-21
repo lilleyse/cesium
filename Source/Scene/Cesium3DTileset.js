@@ -430,7 +430,6 @@ define([
                 // With additive refinement, the tile is rendered
                 // regardless of if its SSE is sufficient.
                 selectTile(selectedTiles, t, fullyVisible, frameState);
-
 // TODO: experiment with prefetching children
                 if (sse > maximumScreenSpaceError) {
                     // Tile does not meet SSE. Refine them in front-to-back order.
@@ -517,10 +516,6 @@ define([
 
     var refineStack = [];
     function makeRefinable(tiles3D, outOfCore, tile) {
-        if (tile.refinable) {
-            return true;
-        }
-
         var refinable = true;
         var stack = refineStack;
         stack.push(tile);
@@ -563,6 +558,7 @@ define([
 
     function removeFromProcessingQueue(tiles3D, tile) {
         return function() {
+            console.log(tile);
             var index = tiles3D._processingQueue.indexOf(tile);
             if (index >= 0) {
                 // Remove from processing queue
