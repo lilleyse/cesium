@@ -67,13 +67,17 @@ define([
         });
     };
 
-    Cesium3DTilesTester.loadTileset = function(scene, url) {
+    Cesium3DTilesTester.loadTileset = function(scene, url, refine) {
         // Load all visible tiles
         var tileset = scene.primitives.add(new Cesium3DTileset({
             url : url
         }));
+
         return tileset.readyPromise.then(function(tileset) {
+            var root = tileset._root;
+            root.refine = defaultValue(refine, root.refine);
             return Cesium3DTilesTester.waitForPendingRequests(scene, tileset).then(function() {
+                scene.renderForSpecs();
                 return tileset;
             });
         });

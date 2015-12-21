@@ -275,9 +275,7 @@ defineSuite([
     });
 
     it('additive refinement - selects root when sse is met', function() {
-        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl).then(function(tileset) {
-            tileset._root.refine = Cesium3DTileRefine.ADD;
-
+        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl, Cesium3DTileRefine.ADD).then(function(tileset) {
             // Meets screen space error, only root tile is rendered
             viewRootOnly();
             scene.renderForSpecs();
@@ -289,9 +287,7 @@ defineSuite([
     });
 
     it('additive refinement - selects all tiles when sse is not met', function() {
-        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl).then(function(tileset) {
-            tileset._root.refine = Cesium3DTileRefine.ADD;
-
+        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl, Cesium3DTileRefine.ADD).then(function(tileset) {
             // Does not meet screen space error, all tiles are visible
             viewAllTiles();
             scene.renderForSpecs();
@@ -304,9 +300,7 @@ defineSuite([
 
 
     it('replacement refinement - selects root when sse is met', function() {
-        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl).then(function(tileset) {
-            tileset._root.refine = Cesium3DTileRefine.REPLACE;
-
+        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl, Cesium3DTileRefine.REPLACE).then(function(tileset) {
             // Meets screen space error, only root tile is rendered
             viewRootOnly();
             scene.renderForSpecs();
@@ -318,9 +312,7 @@ defineSuite([
     });
 
     it('replacement refinement - selects children when sse is not met', function() {
-        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl).then(function(tileset) {
-            tileset._root.refine = Cesium3DTileRefine.REPLACE;
-
+        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl, Cesium3DTileRefine.REPLACE).then(function(tileset) {
             // Does not meet screen space error, child tiles replace root tile
             viewAllTiles();
             scene.renderForSpecs();
@@ -335,10 +327,7 @@ defineSuite([
         // Set view so that only root tile is loaded initially
         viewRootOnly();
 
-        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl).then(function(tileset) {
-            var root = tileset._root;
-            root.refine = Cesium3DTileRefine.REPLACE;
-
+        return Cesium3DTilesTester.loadTileset(scene, tilesetUrl, Cesium3DTileRefine.REPLACE).then(function(tileset) {
             // Set zoom to start loading child tiles
             viewAllTiles();
             scene.renderForSpecs();
@@ -347,7 +336,7 @@ defineSuite([
             expect(stats.visited).toEqual(1);
             expect(stats.numberOfCommands).toEqual(1);
             expect(stats.numberOfPendingRequests).toEqual(4);
-            expect(root.numberOfChildrenWithoutContent).toEqual(4);
+            expect(tileset._root.numberOfChildrenWithoutContent).toEqual(4);
         });
     });
 
