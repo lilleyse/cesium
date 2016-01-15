@@ -7,7 +7,8 @@ define([
         './defineProperties',
         './DeveloperError',
         './Queue',
-        './Request'
+        './Request',
+        './RequestType'
     ], function(
         Uri,
         when,
@@ -16,7 +17,8 @@ define([
         defineProperties,
         DeveloperError,
         Queue,
-        Request) {
+        Request,
+        RequestType) {
     "use strict";
 
     function RequestTypeBudget(request) {
@@ -38,7 +40,7 @@ define([
         /**
          * Type of request. Used for more fine-grained priority sorting.
          */
-        this.requestType = request.requestType;
+        this.type = request.type;
     }
 
     var activeRequestsByServer = {};
@@ -74,7 +76,7 @@ define([
         var length = budgets.length;
         for (var i = 0; i < length; ++i) {
             budget = budgets[i];
-            if ((budget.server === request.server) && (budget.requestType === request.requestType)) {
+            if ((budget.server === request.server) && (budget.type === request.type)) {
                 return budget;
             }
         }
@@ -103,6 +105,13 @@ define([
         var requests = leftoverRequests;
         requests.sort(distanceSortFunction);
 
+        //// DEBUG
+        //length = requests.length;
+        //for (i = 0; i < length; ++i) {
+        //    console.log(requests[i].type + ': ' + requests[i].distance);
+        //}
+
+
         // Allocate new budgets based on the distances of leftover requests
         var availableRequests = RequestScheduler.getNumberOfAvailableRequests();
         var requestsLength = requests.length;
@@ -115,6 +124,23 @@ define([
                 --availableRequests;
             }
         }
+
+
+        //var types = {};
+        //length = budgets.length;
+        //for (i = 0; i < length; ++i) {
+        //    if (budgets[i].total > 0) {
+        //        types[budgets[i].type] = defaultValue(types[budgets[i].type], 0) + budgets[i].total;
+        //    }
+        //}
+        //
+        //console.log('--------Budget---------');
+        //for (var name in types) {
+        //    if (types.hasOwnProperty(name)) {
+        //        var names = ['TERRAIN', 'IMAGERY', '3DTiles'];
+        //        console.log(names[name] + ': ' + types[name]);
+        //    }
+        //}
 
         requests.length = 0;
     };
@@ -246,7 +272,7 @@ define([
      *   url : url,
      *   requestFunction : requestFunction
      * });
-     * var promise = Cesium.RequestScheduler.throttleRequest(request);
+     * var promise = Cesium.RequestScheduler.schedule(request);
      * if (!Cesium.defined(promise)) {
      *   // too many active requests in progress, try again later.
      * } else {
@@ -256,7 +282,7 @@ define([
      * }
      *
      */
-    RequestScheduler.throttleRequest = function(request) {
+    RequestScheduler.schedule = function(request) {
         //>>includeStart('debug', pragmas.debug);
         if (!defined(request)) {
             throw new DeveloperError('request is required.');
@@ -291,7 +317,7 @@ define([
             }
         }
 
-        if (RequestScheduler.prioritize && defined(request.requestType) && !request.defer) {
+        if (RequestScheduler.prioritize && defined(request.type) && !request.defer) {
             var budget = getBudget(request);
             if (budget.used >= budget.total) {
                 // Request does not fit in the budget, return undefined
@@ -312,15 +338,17 @@ define([
      * @param {RequestScheduler~RequestFunction} requestFunction The actual function that
      *        makes the request.
      * @param {Object} [parameters] Extra parameters to send with the request.
+     * @param {RequestType} [requestType] Type of request. Used for more fine-grained priority sorting.
      *
      * @returns {Promise.<Object>} A Promise for the requested data.
      */
-    RequestScheduler.request = function(url, requestFunction, parameters) {
-        return RequestScheduler.throttleRequest(new Request({
+    RequestScheduler.request = function(url, requestFunction, parameters, requestType) {
+        return RequestScheduler.schedule(new Request({
             url : url,
             parameters : parameters,
             requestFunction : requestFunction,
-            defer : true
+            defer : true,
+            type : defaultValue(requestType, RequestType.OTHER)
         }));
     };
 

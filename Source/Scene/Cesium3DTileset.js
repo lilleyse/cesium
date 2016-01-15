@@ -220,10 +220,10 @@ define([
         var tileset = this;
 
         // We don't know the distance of the tileset until tiles.json is loaded, so use the default distance for now
-        var promise = RequestScheduler.throttleRequest(new Request({
+        var promise = RequestScheduler.schedule(new Request({
             url : tilesJson,
             requestFunction : loadJson,
-            requestType : RequestType.TILES3D
+            type : RequestType.TILES3D
         }));
 
         if (!defined(promise)) {

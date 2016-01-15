@@ -398,7 +398,7 @@ define([
          * @type {String}
          * @readonly
          */
-        requestType : {
+        type : {
             get : function() {
                 //>>includeStart('debug', pragmas.debug);
                 if (!this._ready) {
