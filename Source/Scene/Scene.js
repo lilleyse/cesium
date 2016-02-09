@@ -59,6 +59,7 @@ define([
         './SceneTransforms',
         './SceneTransitioner',
         './ScreenSpaceCameraController',
+        './ShadowMap',
         './SunPostProcess',
         './TweenCollection'
     ], function(
@@ -121,6 +122,7 @@ define([
         SceneTransforms,
         SceneTransitioner,
         ScreenSpaceCameraController,
+        ShadowMap,
         SunPostProcess,
         TweenCollection) {
     "use strict";
@@ -532,6 +534,12 @@ define([
          * @type {Fog}
          */
         this.fog = new Fog();
+
+        /**
+         * Render shadows in the scene.
+         * @type {ShadowMap}
+         */
+        this.shadowMap = new ShadowMap(this);
 
         this._terrainExaggeration = defaultValue(options.terrainExaggeration, 1.0);
 
@@ -1632,6 +1640,43 @@ define([
         }
     }
 
+    function executeShadowMapCommands(scene) {
+        var shadowMap = scene.shadowMap;
+
+        if (!shadowMap.enabled) {
+            return;
+        }
+
+        var context = scene.context;
+        var uniformState = context.uniformState;
+        var shadowMapCommands = scene._frustumCommandsList[0]; // TODO : temporary
+
+        var cameraScene = scene.camera;
+        uniformState.updateCamera(shadowMap.camera);
+
+        if (defined(shadowMapCommands)) {
+            var renderState = shadowMap.renderState;
+            var passState = shadowMap.passState;
+
+            // TODO : Execute only opaque and translucent commands for now.
+            var startPass = Pass.OPAQUE;
+            var endPass = Pass.TRANSLUCENT;
+            for (var pass = startPass; pass < endPass; ++pass) {
+                var commands = shadowMapCommands.commands[pass];
+                var length = shadowMapCommands.indices[pass];
+                for (var i = 0; i < length; ++i) {
+                    var command = commands[i];
+                    // TODO : maybe just use the shader as-is and hope the driver doesn't execute the frag shader since color mask is false
+                    //var shaderProgram = shadowMap.createShadowCastProgram(command.shaderProgram);
+                    //executeCommand(command, scene, context, passState, renderState, shaderProgram);
+                    executeCommand(command, scene, context, passState, renderState);
+                }
+            }
+        }
+
+        uniformState.updateCamera(cameraScene);
+    }
+
     function executeViewportCommands(scene, passState) {
         var context = scene._context;
         
@@ -1910,6 +1955,8 @@ define([
 
         scene.fog.update(frameState);
 
+        scene.shadowMap.update(frameState);
+
         us.update(frameState);
 
         scene._computeCommandList.length = 0;
@@ -1931,6 +1978,7 @@ define([
         createPotentiallyVisibleSet(scene);
         updateAndClearFramebuffers(scene, passState, defaultValue(scene.backgroundColor, Color.BLACK));
         executeComputeCommands(scene);
+        executeShadowMapCommands(scene);
         executeViewportCommands(scene, passState);
         resolveFramebuffers(scene, passState);
         executeOverlayCommands(scene, passState);

@@ -182,6 +182,18 @@ define([
             return '\n';
         });
 
+        var extensions;
+        combinedSources = combinedSources.replace(/#extension .*\n/g, function(match) {
+            if (!defined(extensions)) {
+                extensions = [];
+            }
+            extensions.push(match);
+
+            // Replace original #extension directive with a new line so the line numbers
+            // are not off.
+            return '\n';
+        });
+
         // Remove precision qualifier
         combinedSources = combinedSources.replace(/precision\s(lowp|mediump|highp)\s(float|int);/, '');
 
@@ -198,6 +210,13 @@ define([
         // defaults to #version 100 if not specified
         if (defined(version)) {
             result = '#version ' + version;
+        }
+
+        // Add extensions
+        if (defined(extensions)) {
+            for (i = 0, length = extensions.length; i < length; ++i) {
+                result += extensions[i];
+            }
         }
 
         if (isFragmentShader) {
