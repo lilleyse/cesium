@@ -19,6 +19,11 @@
 <body class="sandcastle-loading" data-sandcastle-bucket="bucket-requirejs.html">
 <style>
     @import url(../templates/bucket.css);
+    #toolbar {
+        background: rgba(42, 42, 42, 0.8);
+        padding: 4px;
+        border-radius: 4px;
+    }
     #toolbar input {
         vertical-align: middle;
         padding-top: 2px;
@@ -27,9 +32,32 @@
 </style>
 <div id="cesiumContainer" class="fullSize"></div>
 <div id="loadingOverlay"><h1>Loading...</h1></div>
-<div id="buttons"></div>
 <div id="toolbar">
     <table><tbody>
+        <tr>
+            <td>Show debug</td>
+            <td><input type="checkbox" data-bind="checked: debug"/></td>
+        </tr>
+        <tr>
+            <td>Freeze frame</td>
+            <td><input type="checkbox" data-bind="checked: freeze"/></td>
+        </tr>
+        <tr>
+            <td>Enabled</td>
+            <td><input type="checkbox" data-bind="checked: shadows"/></td>
+        </tr>
+        <tr>
+            <td>Shadow Mode</td>
+            <td><select data-bind="options: shadowModeOptions, value: shadowMode"/></td>
+        </tr>
+        <tr>
+            <td>Light Source</td>
+            <td><select data-bind="options: lightSourceOptions, value: lightSource"/></td>
+        </tr>
+        <tr>
+            <td>Texture Size</td>
+            <td><select data-bind="options: sizeOptions, value: size"/></td>
+        </tr>
         <tr>
             <td>Light Horizon</td>
             <td>
@@ -109,8 +137,11 @@ var camera = scene.camera;
 var shadowMap;
 var center;
 var height;
-var fixedLightCamera;
-var sunCamera = new Cesium.Camera(scene);
+
+var fixedLightCamera = new Cesium.Camera(scene);
+var dynamicLightCamera = new Cesium.Camera(scene);
+var sunCamera = scene._sunCamera;
+var lightCamera = dynamicLightCamera;
 
 // Get the height of the terrain at the given longitude/latitude, then create the scene.
 var positions = [new Cesium.Cartographic(centerLongitude, centerLatitude)];
@@ -131,7 +162,6 @@ function createScene() {
     frustum.near = frustumNear;
     frustum.far = frustumFar;
 
-    fixedLightCamera = new Cesium.Camera(scene);
     fixedLightCamera.frustum = frustum;
     fixedLightCamera.lookAt(center, new Cesium.Cartesian3(tilt, tilt, offsetZ));
 
@@ -139,8 +169,13 @@ function createScene() {
 
     resetShadows({
         context : context,
-        lightCamera : sunCamera
+        lightCamera : lightCamera
     });
+}
+
+function setLightCamera(camera) {
+    lightCamera = camera;
+    shadowMap._lightCamera = camera;
 }
 
 function resetShadows(shadowOptions) {
@@ -156,6 +191,8 @@ function resetShadows(shadowOptions) {
     shadowMap = scene.sunShadowMap;
     shadowMap.enabled = true;
     shadowMap.debugShow = true;
+
+    setLightCamera(shadowOptions.lightCamera);
 
     var ground = Cesium.Cartesian3.fromRadians(centerLongitude, centerLatitude, height - 50.0);
     var center = Cesium.Cartesian3.fromRadians(centerLongitude, centerLatitude, height);
@@ -282,82 +319,7 @@ function createSphere(origin) {
     scene.primitives.add(sphere);
 }
 
-var shadowModes = [];
-
-shadowModes.push({
-    text : 'Cascaded Shadow Map',
-    onselect : function() {
-        resetShadows({
-            context : context,
-            lightCamera : sunCamera
-        });
-    }
-});
-
-shadowModes.push({
-    text : 'Cascaded Shadow Map w/ Colors',
-    onselect : function() {
-        resetShadows({
-            context : context,
-            lightCamera : sunCamera
-        });
-        shadowMap.debugVisualizeCascades = true;
-    }
-});
-
-shadowModes.push({
-    text : 'Single Shadow Map',
-    onselect : function() {
-        resetShadows({
-            context : context,
-            lightCamera : sunCamera,
-            numberOfCascades : 1
-        });
-    }
-});
-
-shadowModes.push({
-    text : 'Fixed Shadow Map',
-    onselect : function() {
-        resetShadows({
-            context : context,
-            lightCamera : fixedLightCamera,
-            fitToScene : false
-        });
-    }
-});
-
-function setSize(size) {
-    return function() {
-        shadowMap.setSize(size);
-    };
-}
-
-var sizeModes = [];
-var sizes = [256, 512, 1024, 2048];
-var length = sizes.length;
-for (var i = 0; i < length; ++i) {
-    sizeModes.push({
-        text : 'Size: ' + sizes[i],
-        onselect : setSize(sizes[i])
-    });
-}
-
-Sandcastle.addToolbarMenu(shadowModes, 'buttons');
-Sandcastle.addToolbarMenu(sizeModes, 'buttons');
-
-Sandcastle.addToolbarButton('Debug on/off', function() {
-    shadowMap.debugShow = !shadowMap.debugShow;
-}, 'buttons');
-
-Sandcastle.addToolbarButton('Freeze on/off', function() {
-    shadowMap.debugFreezeFrame = !shadowMap.debugFreezeFrame;
-}, 'buttons');
-
-Sandcastle.addToolbarButton('Shadows on/off', function() {
-    shadowMap.enabled = !shadowMap.enabled;
-}, 'buttons');
-
+var offset = new Cesium.Cartesian3();
 function updateLightDirection() {
     var lightHorizon = Cesium.Math.toRadians(viewModel.lightHorizon);
     var lightAngle = Cesium.Math.toRadians(viewModel.lightAngle);
@@ -365,15 +327,26 @@ function updateLightDirection() {
     offset.x = Math.sin(lightAngle) * (1.0 - offset.z);
     offset.y = Math.cos(lightAngle) * (1.0 - offset.z);
 
-    sunCamera.lookAt(center, offset);
+    dynamicLightCamera.lookAt(center, offset);
 }
 
-var offset = new Cesium.Cartesian3();
+var ko = Cesium.knockout;
+
 var viewModel = {
     lightAngle : 0.0,
     lightHorizon : 0.0,
-    shadowFar : 1000.0
+    shadowFar : 1000.0,
+    debug : true,
+    freeze : false,
+    shadows : true,
+    shadowModeOptions : ['Cascades', 'Cascades w/ Colors', 'Single'],
+    shadowMode : 'Cascades',
+    lightSourceOptions : ['Freeform', 'Sun', 'Fixed'],
+    lightSource : 'Freeform',
+    sizeOptions : [256, 512, 1024, 2048],
+    size : 1024
 };
+
 Cesium.knockout.track(viewModel);
 var toolbar = document.getElementById('toolbar');
 Cesium.knockout.applyBindings(viewModel, toolbar);
@@ -381,6 +354,18 @@ Cesium.knockout.getObservable(viewModel, 'lightAngle').subscribe(updateLightDire
 Cesium.knockout.getObservable(viewModel, 'lightHorizon').subscribe(updateLightDirection);
 Cesium.knockout.getObservable(viewModel, 'shadowFar').subscribe(function(value) {
     shadowMap._farPlane = Number(value);
+});
+Cesium.knockout.getObservable(viewModel, 'debug').subscribe(function(value) {
+    shadowMap.debugShow = value;
+});
+Cesium.knockout.getObservable(viewModel, 'freeze').subscribe(function(value) {
+    shadowMap.debugFreezeFrame = value;
+});
+Cesium.knockout.getObservable(viewModel, 'shadows').subscribe(function(value) {
+    shadowMap.enabled = value;
+});
+Cesium.knockout.getObservable(viewModel, 'shadowMode').subscribe(function(value) {
+    shadowMap.enabled = value;
 });
 
 updateLightDirection();
