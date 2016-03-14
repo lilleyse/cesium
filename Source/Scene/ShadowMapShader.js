@@ -15,53 +15,15 @@ define([
     function ShadowMapShader() {
     }
 
-    ShadowMapShader.createShadowCastVertexShader = function(vs, frameState, positionECVaryingName) {
-        var isPointLight = frameState.shadowMap.isPointLight;
-        if (isPointLight) {
-            // If a world-space position varying does not exist, create one to send to the fragment shader
-            var hasPositionEC = defined(positionECVaryingName) && (vs.indexOf(positionECVaryingName) > -1);
-            if (!hasPositionEC) {
-                vs = ShaderSource.replaceMain(vs, 'czm_shadow_main');
-                vs +=
-                    'varying vec3 v_positionEC; \n' +
-                    'void main() \n' +
-                    '{ \n' +
-                    '    czm_shadow_main(); \n' +
-                    '    v_positionEC = (czm_inverseViewProjection * gl_Position).xyz; \n' +
-                    '} \n';
-            }
-        }
-
+    ShadowMapShader.createShadowCastVertexShader = function(vs) {
         return vs;
     };
 
-    ShadowMapShader.createShadowCastFragmentShader = function(fs, frameState, opaque, positionECVaryingName) {
+    ShadowMapShader.createShadowCastFragmentShader = function(fs, frameState, opaque) {
         // TODO : is there an easy way to tell if a model or primitive is opaque before going here?
-        opaque = defaultValue(opaque, false);
-        var isPointLight = frameState.shadowMap.isPointLight;
         var usesDepthTexture = frameState.shadowMap.usesDepthTexture;
-        var hasPositionEC = true;
-
-        var outputText;
-        if (isPointLight) {
-            // Write the distance from the light into the depth texture, scaled to the [0, 1] range.
-            hasPositionEC = defined(positionECVaryingName) && (fs.indexOf(positionECVaryingName) > -1);
-            positionECVaryingName = hasPositionEC ? positionECVaryingName : 'v_positionEC';
-            outputText =
-                'float distance = length(' + positionECVaryingName + ') / czm_sunShadowMapRadius; \n' +
-                'gl_FragColor = czm_packDepth(distance); \n';
-        } else {
-            if (usesDepthTexture) {
-                // Depth already written to the depth buffer
-                outputText = 'gl_FragColor = vec4(1.0) \n';
-            } else {
-                // Pack depth and store in the color target
-                outputText = 'gl_FragColor = czm_packDepth(gl_FragCoord.z); \n';
-            }
-        }
 
         fs = ShaderSource.replaceMain(fs, 'czm_shadow_main');
-        fs += (!hasPositionEC ? 'varying vec3 ' + positionECVaryingName +'; \n' : '');
         fs +=
             'void main() \n' +
             '{ \n' +
@@ -71,7 +33,7 @@ define([
             '    if (gl_FragColor.a == 0.0) { \n' +
             '       discard; \n' +
             '    } \n' : '') +
-            outputText +
+            (usesDepthTexture ? 'gl_FragColor = vec4(1.0); \n' : 'gl_FragColor = czm_packDepth(gl_FragCoord.z); \n') +
             '} \n';
 
         return fs;
@@ -104,8 +66,6 @@ define([
 
         fs = ShaderSource.replaceMain(fs, 'czm_shadow_main');
         fs +=
-            (!isPointLight ? 'varying vec3 v_shadowPosition; \n' : '') +
-            ' \n' +
             'vec4 getCascadeWeights(float depthEye) \n' +
             '{ \n' +
             '    // One component is set to 1.0 and all others set to 0.0. \n' +
@@ -151,19 +111,30 @@ define([
 
             '} \n' +
             ' \n' +
-            'float sampleTexture(vec2 shadowCoordinate) \n' +
+            'float sampleTexture(vec2 uv) \n' +
             '{ \n' +
 
             (usesDepthTexture ?
-            '    return texture2D(czm_sunShadowMapTexture, shadowCoordinate).r; \n' :
-            '    return czm_unpackDepth(texture2D(czm_sunShadowMapTexture, shadowCoordinate)); \n') +
-
+            '    return texture2D(czm_sunShadowMapTexture, uv).r; \n' :
+            '    return czm_unpackDepth(texture2D(czm_sunShadowMapTexture, uv)); \n') +
             '} \n' +
             ' \n' +
-            'float getVisibility(vec3 shadowPosition, vec3 lightDirectionEC) \n' +
+
+            (isPointLight ?
+            'float getVisibility(vec3 shadowPosition, vec3 lightDirectionEC, vec2 faceUV)' :
+            'float getVisibility(vec3 shadowPosition, vec3 lightDirectionEC)') +
+
             '{ \n' +
             '    float depth = shadowPosition.z; \n' +
             '    float shadowDepth = sampleTexture(shadowPosition.xy); \n' +
+
+            (isPointLight ?
+            '    vec4 shadowCoord = vec4(faceUV, shadowDepth, 1.0); \n' +
+            '    shadowCoord = shadowCoord * 2.0 - 1.0; \n' +
+            '    shadowCoord = czm_sunShadowMapMatrix * shadowCoord; \n' +
+            '    shadowCoord /= shadowCoord.w; \n' +
+            '    shadowDepth = length(shadowCoord.xyz) / czm_sunShadowMapRadius; \n' : '') +
+
             '    float visibility = step(depth, shadowDepth); \n' +
 
             (hasNormalVarying ?
@@ -174,22 +145,24 @@ define([
             '    visibility *= strength; \n' : '') +
 
             '    visibility = max(visibility, 0.3); \n' +
+            '    gl_FragColor.rgb *= visibility; \n' +
             '    return visibility; \n' +
             '} \n' +
             ' \n' +
-            'vec2 directionToUV(vec3 v) { \n' +
+            'vec2 directionToUV(vec3 d, out vec2 faceUV) { \n' +
             ' \n' +
-            '    vec3 abs = abs(v); \n' +
+            '    vec3 abs = abs(d); \n' +
             '    float max = max(max(abs.x, abs.y), abs.z); // Get the largest component \n' +
             '    vec3 weights = step(max, abs); // 1.0 for the largest component, 0.0 for the others \n' +
-            '    float sign = dot(weights, sign(v)) * 0.5 + 0.5; // 0 or 1 \n' +
-            '    float sc = dot(weights, mix(vec3(v.z, v.x, -v.x), vec3(-v.z, v.x, v.x), sign)); \n' +
-            '    float tc = dot(weights, mix(vec3(-v.y, -v.z, -v.y), vec3(-v.y, v.z, -v.y), sign)); \n' +
-            '    vec2 uv = (vec2(sc, tc) / max) * 0.5 + 0.5; \n' +
+            '    float sign = dot(weights, sign(d)) * 0.5 + 0.5; // 0 or 1 \n' +
+            '    float sc = dot(weights, mix(vec3(d.z, d.x, -d.x), vec3(-d.z, d.x, d.x), sign)); \n' +
+            '    float tc = dot(weights, mix(vec3(-d.y, -d.z, -d.y), vec3(-d.y, d.z, -d.y), sign)); \n' +
+            '    faceUV = (vec2(sc, tc) / max) * 0.5 + 0.5; \n' +
             '    float offsetX = dot(weights, vec3(0.0, 1.0, 2.0)); \n' +
             '    float offsetY = sign; \n' +
-            '    uv.x = (uv.x + offsetX) / 3.0; \n' +
-            '    uv.y = (uv.y + offsetY) / 2.0; \n' +
+            '    vec2 uv; \n' +
+            '    uv.x = (faceUV.x + offsetX) / 3.0; \n' +
+            '    uv.y = (faceUV.y + offsetY) / 2.0; \n' +
             '    return uv; \n' +
             '} \n';
 
@@ -201,12 +174,13 @@ define([
                 '    vec3 directionEC = ' + positionVaryingName + ' - czm_sunShadowMapLightPositionEC; \n' +
                 '    float distance = length(directionEC) / czm_sunShadowMapRadius; \n' +
                 '    vec3 directionWC  = czm_inverseViewRotation * directionEC; \n' +
-                '    vec2 uv = directionToUV(directionWC); \n' +
-                '    float visibility = getVisibility(vec3(uv, distance), -directionEC); \n' +
-                '    gl_FragColor.rgb *= visibility; \n' +
+                '    vec2 faceUV; \n' +
+                '    vec2 uv = directionToUV(directionWC, faceUV); \n' +
+                '    float visibility = getVisibility(vec3(uv, distance), -directionEC, faceUV); \n' +
                 '} \n';
         } else {
             fs +=
+                'varying vec3 v_shadowPosition; \n' +
                 'void main() \n' +
                 '{ \n' +
                 '    czm_shadow_main(); \n' +

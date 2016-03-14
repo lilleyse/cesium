@@ -188,7 +188,7 @@ define([
 
         // Only enable the color mask if the depth texture extension is not supported
         // The point light fragment shader needs to write depth values, so it needs to use a color texture
-        this._usesDepthTexture = context.depthTexture && !this._isPointLight;
+        this._usesDepthTexture = context.depthTexture;// && !this._isPointLight;
         var colorMask = !this._usesDepthTexture;
 
         // For shadow casters
@@ -915,6 +915,7 @@ define([
 
     ShadowMap.prototype.updateShadowMapMatrix = function(uniformState) {
         if (this._isPointLight) {
+            Matrix4.inverse(this._passCameras[0].frustum.projectionMatrix, this._shadowMapMatrix);
             // Point lights do not use a shadow map matrix
             return;
         }
