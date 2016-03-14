@@ -108,8 +108,8 @@ var viewModel = {
     fitNearFar : true,
     cascadeOptions : [1, 4],
     cascades : 4,
-    lightSourceOptions : ['Freeform', 'Sun', 'Fixed'],
-    lightSource : 'Freeform',
+    lightSourceOptions : ['Freeform', 'Sun', 'Fixed', 'Point'],
+    lightSource : 'Point',
     sizeOptions : [256, 512, 1024, 2048],
     size : 1024
 };
@@ -173,6 +173,13 @@ function updateShadows() {
             lightCamera : fixedLightCamera,
             cascadesEnabled : false
         });
+    } else if (lightSource === 'Point') {
+        resetShadows({
+            context : context,
+            lightCamera : pointLightCamera,
+            isPointLight : true,
+            radius : 30
+        });
     } else if (cascades === 4) {
         resetShadows({
             context : context,
@@ -190,7 +197,7 @@ function updateShadows() {
     updateSettings();
 }
 
-var globeVisible = true;
+var globeVisible = false;
 var terrainEnabled = false;
 
 var viewer = new Cesium.Viewer('cesiumContainer', {
@@ -246,6 +253,7 @@ var height;
 var fixedLightCamera = new Cesium.Camera(scene);
 var freeformLightCamera = new Cesium.Camera(scene);
 var sunCamera = scene._sunCamera;
+var pointLightCamera = new Cesium.Camera(scene);
 
 // Get the height of the terrain at the given longitude/latitude, then create the scene.
 var positions = [new Cesium.Cartographic(centerLongitude, centerLatitude)];
@@ -268,6 +276,8 @@ function createScene() {
 
     fixedLightCamera.frustum = frustum;
     fixedLightCamera.lookAt(center, new Cesium.Cartesian3(tilt, tilt, offsetZ));
+
+    pointLightCamera.position = center;
 
     camera.lookAt(center, new Cesium.Cartesian3(25.0, 25.0, 30.0));
 
@@ -295,15 +305,16 @@ function resetShadows(shadowOptions) {
     var position3 = Cesium.Cartesian3.fromRadians(centerLongitude, centerLatitude, height + 15.0);
 
     //createModel('../../SampleData/models/CesiumAir/Cesium_Air.glb', position3);
-    createModel('../../SampleData/models/ShadowTester/Shadow_Tester.gltf', center);
-    createModel('../../SampleData/models/WoodTower/Wood_Tower.gltf', ground);
-    createBox(position3);
-    createBoxRTC(position2);
-    createSphere(position1);
+    createModel('../../SampleData/models/ShadowTester/Shadow_Tester4.gltf', center);
+//    createModel('../../SampleData/models/WoodTower/Wood_Tower.gltf', ground);
+//    createBox(position3);
+//    createBoxRTC(position2);
+//    createSphere(position1);
 }
 
 function createModel(url, origin) {
-    var modelMatrix = Cesium.Transforms.headingPitchRollToFixedFrame(origin, 0.0, 0.0, 0.0);
+    //var modelMatrix = Cesium.Transforms.headingPitchRollToFixedFrame(origin, 0.0, 0.0, 0.0);
+    var modelMatrix = Cesium.Matrix4.fromTranslation(origin);
 
     var model = scene.primitives.add(Cesium.Model.fromGltf({
         url : url,

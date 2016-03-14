@@ -101,7 +101,7 @@ define([
      * @param {Context} options.context The context in which to create the shadow map.
      * @param {Camera} options.lightCamera A camera representing the light source.
      * @param {Boolean} [options.isPointLight=false] Whether the light source is a point light. Point light shadows do not use cascades.
-     * @param {Boolean} [options.radius=100.0] Radius of the point light.
+     * @param {Boolean} [options.radius=10.0] Radius of the point light.
      * @param {Boolean} [options.cascadesEnabled=true] Use multiple shadow maps to cover different partitions of the view frustum.
      * @param {Number} [options.numberOfCascades=4] The number of cascades to use for the shadow map. Supported values are one and four.
      * @param {Number} [options.size=1024] The width and height, in pixels, of each shadow map.
@@ -136,6 +136,7 @@ define([
         this._shadowMapMatrix = new Matrix4();
         this._shadowMapTexture = undefined;
         this._lightDirectionEC = new Cartesian3();
+        this._lightPositionEC = new Cartesian3();
 
         this._framebuffer = undefined;
         this._shadowMapSize = defaultValue(options.size, 1024);
@@ -146,7 +147,7 @@ define([
         this._sceneCamera = undefined;
 
         this._isPointLight = defaultValue(options.isPointLight, false);
-        this._radius = defaultValue(options.radius, 100.0);
+        this._radius = defaultValue(options.radius, 10.0);
 
         this._cascadesEnabled = this._isPointLight ? false : defaultValue(options.cascadesEnabled, true);
         this._numberOfCascades = !this._cascadesEnabled ? 0 :defaultValue(options.numberOfCascades, 4);
@@ -180,12 +181,15 @@ define([
         this.debugFreezeFrame = false;
         this.debugVisualizeCascades = false;
         this._debugLightFrustum = undefined;
+        this._debugPointLight = undefined;
         this._debugCameraFrustum = undefined;
         this._debugCascadeFrustums = new Array(this._numberOfCascades);
         this._debugShadowViewCommand = undefined;
 
         // Only enable the color mask if the depth texture extension is not supported
-        var colorMask = !context.depthTexture;
+        // The point light fragment shader needs to write depth values, so it needs to use a color texture
+        this._usesDepthTexture = context.depthTexture && !this._isPointLight;
+        var colorMask = !this._usesDepthTexture;
 
         // For shadow casters
         this._renderState = RenderState.fromCache({
@@ -203,11 +207,11 @@ define([
                 alpha : colorMask
             },
             depthMask : true,
-            polygonOffset : {
-                enabled : true,
-                factor : 1.1,
-                units : 4.0
-            }
+            //polygonOffset : {
+            //    enabled : true,
+            //    factor : 1.1,
+            //    units : 4.0
+            //}
         });
 
         // For clearing the shadow map texture every frame
@@ -325,6 +329,26 @@ define([
             get : function() {
                 return this._lightDirectionEC;
             }
+        },
+        lightPositionEC : {
+            get : function() {
+                return this._lightPositionEC;
+            }
+        },
+        isPointLight : {
+            get : function() {
+                return this._isPointLight;
+            }
+        },
+        radius : {
+            get : function() {
+                return this._radius;
+            }
+        },
+        usesDepthTexture : {
+            get : function() {
+                return this._usesDepthTexture;
+            }
         }
     });
 
@@ -388,7 +412,7 @@ define([
     }
 
     function createFramebuffer(shadowMap, context) {
-        var createFunction = (context.depthTexture) ? createFramebufferDepth : createFramebufferColor;
+        var createFunction = (shadowMap._usesDepthTexture) ? createFramebufferDepth : createFramebufferColor;
         var framebuffer = createFunction(shadowMap, context);
         shadowMap._framebuffer = framebuffer;
         shadowMap._clearCommand.framebuffer = framebuffer;
@@ -448,7 +472,7 @@ define([
         this._clearCommand.renderState.viewport = new BoundingRectangle(0, 0, textureSize.x, textureSize.y);
     };
 
-    function updateDebugShadowViewCommand(shadows, frameState) {
+    function updateDebugShadowViewCommand(shadowMap, frameState) {
         // Draws the shadow map on the bottom-right corner of the screen
         var context = frameState.context;
         var screenWidth = frameState.context.drawingBufferWidth;
@@ -460,13 +484,13 @@ define([
         var width = size;
         var height = size;
 
-        if (!defined(shadows._debugShadowViewCommand)) {
+        if (!defined(shadowMap._debugShadowViewCommand)) {
             var fs =
                 'varying vec2 v_textureCoordinates; \n' +
                 'void main() \n' +
                 '{ \n' +
 
-                (context.depthTexture ?
+                (shadowMap._usesDepthTexture ?
                 '    float shadow = texture2D(czm_sunShadowMapTexture, v_textureCoordinates).r; \n' :
                 '    float shadow = czm_unpackDepth(texture2D(czm_sunShadowMapTexture, v_textureCoordinates)); \n') +
 
@@ -481,16 +505,16 @@ define([
             var drawCommand = context.createViewportQuadCommand(fs);
             drawCommand.renderState = renderState;
             drawCommand.pass = Pass.OVERLAY;
-            shadows._debugShadowViewCommand = drawCommand;
+            shadowMap._debugShadowViewCommand = drawCommand;
         }
 
-        var viewport = shadows._debugShadowViewCommand.renderState.viewport;
+        var viewport = shadowMap._debugShadowViewCommand.renderState.viewport;
         viewport.x = x;
         viewport.y = y;
         viewport.width = width;
         viewport.height = height;
 
-        frameState.commandList.push(shadows._debugShadowViewCommand);
+        frameState.commandList.push(shadowMap._debugShadowViewCommand);
     }
 
     var frustumCornersNDC = new Array(8);
@@ -528,7 +552,26 @@ define([
         });
     }
 
+    function createDebugSphere(color) {
+        return new Primitive({
+            geometryInstances : new GeometryInstance({
+                geometry : new SphereOutlineGeometry({
+                    radius : 1.0
+                }),
+                attributes : {
+                    color : ColorGeometryInstanceAttribute.fromColor(color)
+                }
+            }),
+            appearance : new PerInstanceColorAppearance({
+                translucent : false,
+                flat : true
+            }),
+            asynchronous : false
+        });
+    }
+
     var debugCascadeColors = [Color.RED, Color.GREEN, Color.BLUE, Color.MAGENTA];
+    var scratchScale = new Matrix4();
 
     function applyDebugSettings(shadowMap, frameState) {
         updateDebugShadowViewCommand(shadowMap, frameState);
@@ -538,15 +581,21 @@ define([
             return;
         }
 
-        var debugLightFrustum = shadowMap._debugLightFrustum;
-        if (!defined(debugLightFrustum)) {
-            debugLightFrustum = shadowMap._debugLightFrustum = createDebugFrustum(Color.YELLOW);
-        }
-        debugLightFrustum.update(frameState);
 
         if (shadowMap._isPointLight) {
-            // TODO : get model matrix of light
+            var debugPointLight = shadowMap._debugPointLight;
+            if (!defined(debugPointLight)) {
+                debugPointLight = shadowMap._debugPointLight = createDebugSphere(Color.YELLOW);
+            }
+
+            var scale = Matrix4.fromUniformScale(shadowMap._radius, scratchScale);
+            var translation = Matrix4.fromTranslation(shadowMap._shadowMapCamera.positionWC, scratchMatrix);
+            Matrix4.multiply(translation, scale, debugPointLight.modelMatrix);
         } else {
+            var debugLightFrustum = shadowMap._debugLightFrustum;
+            if (!defined(debugLightFrustum)) {
+                debugLightFrustum = shadowMap._debugLightFrustum = createDebugFrustum(Color.YELLOW);
+            }
             Matrix4.inverse(shadowMap._shadowMapCamera.getViewProjection(), debugLightFrustum.modelMatrix);
             debugLightFrustum.update(frameState);
         }
@@ -754,6 +803,53 @@ define([
         Cartesian3.clone(lightRight, shadowMapCamera.rightWC);
     }
 
+    var directions = [
+        new Cartesian3(-1, 0, 0),
+        new Cartesian3(0, -1, 0),
+        new Cartesian3(0, 0, -1),
+        new Cartesian3(1, 0, 0),
+        new Cartesian3(0, 1, 0),
+        new Cartesian3(0, 0, 1)
+    ];
+
+    var ups = [
+        new Cartesian3(0, -1, 0),
+        new Cartesian3(0, 0, -1),
+        new Cartesian3(0, -1, 0),
+        new Cartesian3(0, -1, 0),
+        new Cartesian3(0, 0, 1),
+        new Cartesian3(0, -1, 0)
+    ];
+
+    var rights = [
+        new Cartesian3(0, 0, 1),
+        new Cartesian3(1, 0, 0),
+        new Cartesian3(-1, 0, 0),
+        new Cartesian3(0, 0, -1),
+        new Cartesian3(1, 0, 0),
+        new Cartesian3(1, 0, 0)
+    ];
+
+    function computeOmnidirectional(shadowMap) {
+        for (var i = 0; i < 6; ++i) {
+            var camera = shadowMap._passCameras[i];
+            camera.positionWC = shadowMap._shadowMapCamera.positionWC;
+            camera.directionWC = directions[i];
+            camera.upWC = ups[i];
+            camera.rightWC = rights[i];
+
+            Matrix4.computeView(camera.directionWC, camera.upWC, camera.rightWC, camera.positionWC, camera.viewMatrix);
+            Matrix4.inverse(camera.viewMatrix, camera.inverseViewMatrix);
+
+            var frustum = new PerspectiveFrustum();
+            frustum.fov = CesiumMath.PI / 2.0;
+            frustum.near = 1.0;
+            frustum.far = shadowMap._radius;
+            frustum.aspectRatio = 1.0;
+            camera.frustum = frustum;
+        }
+    }
+
     function updateCameras(shadowMap, frameState) {
         if (shadowMap.debugFreezeFrame) {
             return;
@@ -770,6 +866,9 @@ define([
         Matrix4.multiplyByPointAsVector(camera.viewMatrix, shadowMapCamera.directionWC, lightDirection);
         Cartesian3.normalize(lightDirection, lightDirection);
         Cartesian3.negate(lightDirection, lightDirection);
+
+        // Get the light position in eye coordinates
+        Matrix4.multiplyByPoint(camera.viewMatrix, shadowMapCamera.positionWC, shadowMap._lightPositionEC);
 
         // Get the near and far of the scene camera
         var near;
@@ -793,7 +892,8 @@ define([
         updateCameras(this, frameState);
 
         if (this._isPointLight) {
-            // TODO
+            // TODO : only update if the light moves
+            computeOmnidirectional(this);
         }
 
         if (this._cascadesEnabled) {
@@ -814,6 +914,10 @@ define([
     };
 
     ShadowMap.prototype.updateShadowMapMatrix = function(uniformState) {
+        if (this._isPointLight) {
+            // Point lights do not use a shadow map matrix
+            return;
+        }
         // Calculate shadow map matrix. It converts gl_Position to shadow map texture space.
         // Needs to be updated for each frustum in multi-frustum rendering because the projection matrix changes.
         var shadowViewProjection = this._shadowMapCamera.getViewProjection();
@@ -828,6 +932,7 @@ define([
         destroyFramebuffer(this);
 
         this._debugLightFrustum = this._debugLightFrustum && this._debugLightFrustum.destroy();
+        this._debugPointLight = this._debugPointLight && this._debugPointLight.destroy();
         this._debugCameraFrustum = this._debugCameraFrustum && this._debugCameraFrustum.destroy();
         this._debugShadowViewCommand = this._debugShadowViewCommand && this._debugShadowViewCommand.shaderProgram && this._debugShadowViewCommand.shaderProgram.destroy();
 

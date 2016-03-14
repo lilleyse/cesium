@@ -192,7 +192,7 @@ define([
             vs.sources.push(get2DYPositionFraction(useWebMercatorProjection));
 
             if (receiveShadows) {
-                vs.sources[1] = ShadowMapShader.createShadowReceiveVertexShader(vs.sources[1]);
+                vs.sources[1] = ShadowMapShader.createShadowReceiveVertexShader(vs.sources[1], frameState);
                 fs.sources[0] = ShadowMapShader.createShadowReceiveFragmentShader(fs.sources[0], frameState, '-v_normalEC', 'v_positionEC');
             }
 
@@ -276,8 +276,8 @@ define([
             vs.sources.push(getPositionMode(sceneMode));
             vs.sources.push(get2DYPositionFraction(useWebMercatorProjection));
 
-            vs.sources[1] = ShadowMapShader.createShadowCastVertexShader(vs.sources[1]);
-            fs.sources[0] = ShadowMapShader.createShadowCastFragmentShader(fs.sources[0], frameState, true);
+            vs.sources[1] = ShadowMapShader.createShadowCastVertexShader(vs.sources[1], frameState, 'v_positionEC');
+            fs.sources[0] = ShadowMapShader.createShadowCastFragmentShader(fs.sources[0], frameState, true, 'v_positionEC');
 
             shadowCastShader = this._shadowCastPrograms[flags] = ShaderProgram.fromCache({
                 context : frameState.context,
