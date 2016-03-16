@@ -24,6 +24,7 @@ define([
         '../Core/PrimitiveType',
         '../Core/SphereOutlineGeometry',
         '../Renderer/ClearCommand',
+        '../Renderer/CubeMap',
         '../Renderer/Framebuffer',
         '../Renderer/PassState',
         '../Renderer/PixelDatatype',
@@ -70,6 +71,7 @@ define([
         PrimitiveType,
         SphereOutlineGeometry,
         ClearCommand,
+        CubeMap,
         Framebuffer,
         PassState,
         PixelDatatype,
@@ -150,6 +152,7 @@ define([
 
         this._isPointLight = defaultValue(options.isPointLight, false);
         this._radius = defaultValue(options.radius, 100.0);
+        this._usesCubeMap = true;
 
         this._cascadesEnabled = this._isPointLight ? false : defaultValue(options.cascadesEnabled, true);
         this._numberOfCascades = !this._cascadesEnabled ? 0 :defaultValue(options.numberOfCascades, 4);
@@ -341,6 +344,11 @@ define([
                 return this._isPointLight;
             }
         },
+        usesCubeMap : {
+            get function() {
+                return this._usesCubeMap;
+            }
+        }
         radius : {
             get : function() {
                 return this._radius;
@@ -413,9 +421,43 @@ define([
         return framebuffer;
     }
 
+    function createFramebufferCube(shadowMap, context) {
+        var depthRenderbuffer = new Renderbuffer({
+            context : context,
+            width : shadowMap._shadowMapSize,
+            height : shadowMap._shadowMapSize,
+            format : RenderbufferFormat.DEPTH_COMPONENT16
+        });
+
+        // TODO : need to destroy the cubemap texture, FBO won't destroy it
+        var cubeTexture = new CubeMap({
+            context : context,
+            width : shadowMap._shadowMapSize,
+            height : shadowMap._shadowMapSize,
+            pixelFormat : PixelFormat.RGBA,
+            pixelDatatype : PixelDatatype.UNSIGNED_BYTE,
+            sampler : createSampler()
+        });
+
+        var framebuffer = new Framebuffer({
+            context : context,
+            depthRenderbuffer : depthRenderbuffer,
+            colorTextures : [cubeTexture.positiveX]
+        });
+
+        shadowMap._shadowMapTexture = cubeTexture;
+        return framebuffer;
+    }
+
     function createFramebuffer(shadowMap, context) {
-        var createFunction = (shadowMap._usesDepthTexture) ? createFramebufferDepth : createFramebufferColor;
-        var framebuffer = createFunction(shadowMap, context);
+        var framebuffer;
+        if (shadowMap._isPointLight && shadowMap._usesCubeMap) {
+            framebuffer = createFramebufferCube(shadowMap, context);
+        } else if (shadowMap._usesDepthTexture) {
+            framebuffer = createFramebufferDepth(shadowMap, context);
+        } else {
+            framebuffer = createFramebufferColor(shadowMap, context);
+        }
         shadowMap._framebuffer = framebuffer;
         shadowMap._clearCommand.framebuffer = framebuffer;
         for (var i = 0; i < shadowMap._numberOfPasses; ++i) {
@@ -446,6 +488,10 @@ define([
         this._shadowMapSize = size;
         var numberOfPasses = this._numberOfPasses;
         var textureSize = this._textureSize;
+
+        if (this._isPointLight && this._usesCubeMap) {
+            numberOfPasses = 1;
+        }
 
         if (numberOfPasses === 1) {
             // +----+
@@ -487,6 +533,11 @@ define([
     };
 
     function updateDebugShadowViewCommand(shadowMap, frameState) {
+        if (shadowMap._isPointLight && shadowMap._usesCubeMap) {
+            // Figure out how to visualize later
+            return;
+        }
+
         // Draws the shadow map on the bottom-right corner of the screen
         var context = frameState.context;
         var screenWidth = frameState.context.drawingBufferWidth;
@@ -922,6 +973,11 @@ define([
         updateFramebuffer(this, frameState.context);
         updateCameras(this, frameState);
 
+        // TODO : clearing FBO here requires a quick bind/unbind whereas clearing in executeShadowMapCommands does not. Check for performance difference.
+        if (!(this._isPointLight && this._usesCubeMap)) {
+            this._clearCommand.execute(frameState.context);
+        }
+
         if (this._isPointLight) {
             // TODO : only update if the light moves
             computeOmnidirectional(this);
@@ -941,6 +997,14 @@ define([
 
         if (this.debugShow) {
             applyDebugSettings(this, frameState);
+        }
+    };
+
+    ShadowMap.prototype.updatePass = function(context, pass) {
+        if (this._isPointLight && this._usesCubeMap) {
+            var face = this._shadowMapTexture.faces[pass];
+            this._framebuffer._attachTexture(WebGLConstants.COLOR_ATTACHMENT0, face);
+            this._clearCommand.execute(context);
         }
     };
 
