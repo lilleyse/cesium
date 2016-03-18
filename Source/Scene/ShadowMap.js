@@ -244,6 +244,8 @@ define([
         });
     }
 
+    var scratchTexelSize = new Cartesian2();
+
     defineProperties(ShadowMap.prototype, {
         /**
          * The shadow map texture used in shadow receive programs.
@@ -370,6 +372,13 @@ define([
         softShadows : {
             get : function() {
                 return this._softShadows;
+            }
+        },
+        texelSize : {
+            get : function() {
+                scratchTexelSize.x = 1.0 / this._textureSize.x;
+                scratchTexelSize.y = 1.0 / this._textureSize.y;
+                return scratchTexelSize;
             }
         }
     });

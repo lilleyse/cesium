@@ -118,11 +118,11 @@ var viewModel = {
     freeze : false,
     cascadeColors : false,
     fitNearFar : true,
-    softShadows : false,
+    softShadows : true,
     cascadeOptions : [1, 4],
     cascades : 4,
     lightSourceOptions : ['Freeform', 'Sun', 'Fixed', 'Point'],
-    lightSource : 'Point',
+    lightSource : 'Freeform',
     sizeOptions : [256, 512, 1024, 2048],
     size : 1024
 };
@@ -327,7 +327,7 @@ function resetShadows(shadowOptions) {
     var position3 = Cesium.Cartesian3.fromRadians(centerLongitude, centerLatitude, height + 15.0);
 
     //createModel('../../SampleData/models/CesiumAir/Cesium_Air.glb', position3);
-    createModel('../../SampleData/models/ShadowTester/Shadow_Tester_Point.gltf', center);
+    createModel('../../SampleData/models/ShadowTester/Shadow_Tester.gltf', center);
     //createModel('../../SampleData/models/WoodTower/Wood_Tower.gltf', ground);
     createBox(position3);
     createBoxRTC(position2);
