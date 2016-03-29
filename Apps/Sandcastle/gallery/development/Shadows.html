@@ -188,7 +188,7 @@ var viewModel = {
     cascadeOptions : [1, 4],
     cascades : 4,
     cascadesEnabled : true,
-    lightSourceOptions : ['Freeform', 'Sun', 'Fixed', 'Point'],
+    lightSourceOptions : ['Freeform', 'Sun', 'Fixed', 'Point', 'Spot'],
     lightSource : 'Freeform',
     sizeOptions : [256, 512, 1024, 2048],
     size : 1024,
@@ -237,7 +237,7 @@ var viewModel = {
 };
 
 // Temp values for testing
-viewModel.lightSource = 'Freeform';
+viewModel.lightSource = 'Spot';
 viewModel.lightHorizon = 71.0;
 viewModel.terrainCast = true;
 viewModel.distance = 10000.0;
@@ -395,6 +395,13 @@ function updateShadows() {
             isPointLight : true,
             softShadows : softShadows
         });
+    } else if (lightSource === 'Spot') {
+        resetShadows({
+            context : context,
+            lightCamera : spotLightCamera,
+            cascadesEnabled : false,
+            softShadows : softShadows
+        });
     } else if (cascades === 4) {
         resetShadows({
             context : context,
@@ -476,6 +483,7 @@ var fixedLightCamera = new Cesium.Camera(scene);
 var freeformLightCamera = new Cesium.Camera(scene);
 var sunCamera = scene._sunCamera;
 var pointLightCamera = new Cesium.Camera(scene);
+var spotLightCamera = new Cesium.Camera(scene);
 
 updateLocation();
 
@@ -504,6 +512,12 @@ function createScene() {
 
     fixedLightCamera.frustum = frustum;
     fixedLightCamera.lookAt(center, new Cesium.Cartesian3(location.tilt, location.tilt, location.offsetZ));
+
+    spotLightCamera.frustum.fov = Cesium.Math.PI_OVER_FOUR;
+    spotLightCamera.frustum.aspectRatio = 1.0;
+    spotLightCamera.frustum.near = 1.0;
+    spotLightCamera.frustum.far = 200.0;
+    spotLightCamera.lookAt(center, new Cesium.Cartesian3(location.tilt, location.tilt, location.offsetZ));
 
     pointLightCamera.position = center;
 

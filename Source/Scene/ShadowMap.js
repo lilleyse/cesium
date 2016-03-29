@@ -192,6 +192,9 @@ define([
         this._radius = defaultValue(options.radius, 100.0);
         this._usesCubeMap = true;
 
+        // Is a spot light when the light frustum is a PerspectiveFrustum
+        this._isSpotLight = defined(this._lightCamera.frustum.fov);
+
         this._cascadesEnabled = this._isPointLight ? false : defaultValue(options.cascadesEnabled, true);
         this._numberOfCascades = !this._cascadesEnabled ? 0 : defaultValue(options.numberOfCascades, 4);
         this._fitNearFar = true;
@@ -850,7 +853,7 @@ define([
     function ShadowMapCamera() {
         this.viewMatrix = new Matrix4();
         this.inverseViewMatrix = new Matrix4();
-        this.frustum = new OrthographicFrustum();
+        this.frustum = undefined;
         this.positionWC = new Cartesian3();
         this.directionWC = new Cartesian3();
         this.upWC = new Cartesian3();
@@ -861,7 +864,7 @@ define([
     ShadowMapCamera.prototype.clone = function(camera) {
         Matrix4.clone(camera.viewMatrix, this.viewMatrix);
         Matrix4.clone(camera.inverseViewMatrix, this.inverseViewMatrix);
-        camera.frustum.clone(this.frustum);
+        this.frustum = camera.frustum.clone(this.frustum);
         Cartesian3.clone(camera.positionWC, this.positionWC);
         Cartesian3.clone(camera.directionWC, this.directionWC);
         Cartesian3.clone(camera.upWC, this.upWC);
@@ -1135,7 +1138,7 @@ define([
         updateCameras(this, frameState);
 
         // Don't update shadow map if the near plane is further away than the shadow map's distance
-        this._visible = this._sceneCamera.frustum.near < this._distance;
+        this._visible = true;//this._sceneCamera.frustum.near < this._distance;
         if (!this._visible) {
             return;
         }
