@@ -19,10 +19,12 @@ define([
 
     var colorScratch = new Color();
 
-    function Batch(primitives, translucent, appearanceType, closed) {
+    function Batch(primitives, translucent, appearanceType, closed, castShadows, receiveShadows) {
         this.translucent = translucent;
         this.appearanceType = appearanceType;
         this.closed = closed;
+        this.castShadows = castShadows;
+        this.receiveShadows = receiveShadows;
         this.primitives = primitives;
         this.createPrimitive = false;
         this.waitingOnCreate = false;
@@ -107,8 +109,11 @@ define([
                     appearance : new this.appearanceType({
                         translucent : this.translucent,
                         closed : this.closed
-                    })
+                    }),
+                    castShadows : this.castShadows,
+                    receiveShadows : this.receiveShadows
                 });
+
                 primitives.add(primitive);
                 isUpdated = false;
             } else {
@@ -132,11 +137,14 @@ define([
                 primitives.remove(this.oldPrimitive);
                 this.oldPrimitive = undefined;
             }
+            
+            var updater;
+            var updaters = this.updaters.values;
             var updatersWithAttributes = this.updatersWithAttributes.values;
             var length = updatersWithAttributes.length;
             var waitingOnCreate = this.waitingOnCreate;
             for (i = 0; i < length; i++) {
-                var updater = updatersWithAttributes[i];
+                updater = updatersWithAttributes[i];
                 var instance = this.geometry.get(updater.entity.id);
 
                 attributes = this.attributes.get(instance.id.id);
@@ -161,6 +169,18 @@ define([
                 var currentShow = attributes.show[0] === 1;
                 if (show !== currentShow) {
                     attributes.show = ShowGeometryInstanceAttribute.toValue(show, attributes.show);
+                }
+            }
+            
+            length = updaters.length;
+            for (i = 0; i < length; i++) {
+                updater = updaters[i];
+                if (!updater.castShadowsProperty.isConstant || !updater.receiveShadowsProperty.isConstant) {
+                    var castShadows = updater.castShadowsProperty.getValue(time);
+                    var receiveShadows = updater.receiveShadowsProperty.getValue(time);
+                    if (this.castShadows !== castShadows || this.receiveShadows !== receiveShadows) {
+                        this.itemsToRemove[removedCount++] = updater;
+                    }
                 }
             }
 
@@ -235,76 +255,88 @@ define([
      * @private
      */
     function StaticGeometryColorBatch(primitives, appearanceType, closed) {
-        this._solidBatch = new Batch(primitives, false, appearanceType, closed);
-        this._translucentBatch = new Batch(primitives, true, appearanceType, closed);
+        this._primitives = primitives;
+        this._appearanceType = appearanceType;
+        this._closed = closed;
+        this._batches = new AssociativeArray();
     }
     StaticGeometryColorBatch.prototype.add = function(time, updater) {
         var instance = updater.createFillGeometryInstance(time);
-        if (instance.attributes.color.value[3] === 255) {
-            this._solidBatch.add(updater, instance);
-        } else {
-            this._translucentBatch.add(updater, instance);
+        var batches = this._batches;
+
+        var castShadows = updater.castShadowsProperty.getValue(time);
+        var receiveShadows = updater.receiveShadowsProperty.getValue(time);
+        var translucent = instance.attributes.color.value[3] !== 255;
+
+        var batchKey = '' + (castShadows | 0) + (receiveShadows | 0) + (translucent | 0);
+        var batch = batches.get(batchKey);
+        if (!defined(batch)) {
+            batch = new Batch(this._primitives, translucent, this._appearanceType, this._closed, castShadows, receiveShadows);
+            batches.set(batchKey, batch);
         }
+        batch.add(updater, instance);
     };
 
     StaticGeometryColorBatch.prototype.remove = function(updater) {
-        if (!this._solidBatch.remove(updater)) {
-            this._translucentBatch.remove(updater);
+        var batches = this._batches.values;
+        var batchesLength = batches.length;
+        for (var i = 0; i < batchesLength; i++) {
+            if (batches[i].remove(updater)) {
+                return;
+            }
         }
     };
 
     StaticGeometryColorBatch.prototype.update = function(time) {
-        var i;
-        var updater;
+        var batches = this._batches.values;
+        var batchesLength = batches.length;
+        var isUpdated = true;
+        var needUpdate = false;
 
-        //Perform initial update
-        var isUpdated = this._solidBatch.update(time);
-        isUpdated = this._translucentBatch.update(time) && isUpdated;
+        do {
+            needUpdate = false;
+            for (var x = 0; x < batchesLength; x++) {
+                var batch = batches[x];
+                //Perform initial update
+                isUpdated = batch.update(time);
 
-        //If any items swapped between solid/translucent, we need to
-        //move them between batches
-        var itemsToRemove = this._solidBatch.itemsToRemove;
-        var solidsToMoveLength = itemsToRemove.length;
-        if (solidsToMoveLength > 0) {
-            for (i = 0; i < solidsToMoveLength; i++) {
-                updater = itemsToRemove[i];
-                this._solidBatch.remove(updater);
-                this._translucentBatch.add(updater, updater.createFillGeometryInstance(time));
+                //If any items swapped between solid/translucent or changed cast/receive shadows,
+                //we need to move them between batches
+                var itemsToRemove = batch.itemsToRemove;
+                var itemsToMoveLength = itemsToRemove.length;
+                if (itemsToMoveLength > 0) {
+                    needUpdate = true;
+                    for (var i = 0; i < itemsToMoveLength; i++) {
+                        var updater = itemsToRemove[i];
+                        batch.remove(updater);
+                        this.add(time, updater);
+                    }
+                }
             }
-        }
-
-        itemsToRemove = this._translucentBatch.itemsToRemove;
-        var translucentToMoveLength = itemsToRemove.length;
-        if (translucentToMoveLength > 0) {
-            for (i = 0; i < translucentToMoveLength; i++) {
-                updater = itemsToRemove[i];
-                this._translucentBatch.remove(updater);
-                this._solidBatch.add(updater, updater.createFillGeometryInstance(time));
-            }
-        }
-
-        //If we moved anything around, we need to re-build the primitive
-        if (solidsToMoveLength > 0 || translucentToMoveLength > 0) {
-            isUpdated = this._solidBatch.update(time) && isUpdated;
-            isUpdated = this._translucentBatch.update(time) && isUpdated;
-        }
+        } while (needUpdate);
 
         return isUpdated;
     };
 
     StaticGeometryColorBatch.prototype.getBoundingSphere = function(entity, result) {
-        if (this._solidBatch.contains(entity)) {
-            return this._solidBatch.getBoundingSphere(entity, result);
-        } else if (this._translucentBatch.contains(entity)) {
-            return this._translucentBatch.getBoundingSphere(entity, result);
+        var batches = this._batches.values;
+        var batchesLength = batches.length;
+        for (var i = 0; i < batchesLength; i++) {
+            var batch = batches[i];
+            if (batch.contains(entity)){
+                return batch.getBoundingSphere(entity, result);
+            }
         }
+
         return BoundingSphereState.FAILED;
     };
 
     StaticGeometryColorBatch.prototype.removeAllPrimitives = function() {
-        this._solidBatch.removeAllPrimitives();
-        this._translucentBatch.removeAllPrimitives();
+        var batches = this._batches.values;
+        var batchesLength = batches.length;
+        for (var i = 0; i < batchesLength; i++) {
+            batches[i].removeAllPrimitives();
+        }
     };
-
     return StaticGeometryColorBatch;
 });

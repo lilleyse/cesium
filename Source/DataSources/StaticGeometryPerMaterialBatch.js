@@ -28,6 +28,7 @@ define([
         this.material = undefined;
         this.updatersWithAttributes = new AssociativeArray();
         this.attributes = new AssociativeArray();
+        this.itemsToRemove = [];
         this.invalidated = false;
         this.removeMaterialSubscription = materialProperty.definitionChanged.addEventListener(Batch.prototype.onMaterialChanged, this);
         this.subscriptions = new AssociativeArray();
@@ -35,18 +36,6 @@ define([
     }
     Batch.prototype.onMaterialChanged = function() {
         this.invalidated = true;
-    };
-
-    Batch.prototype.isMaterial = function(updater) {
-        var material = this.materialProperty;
-        var updaterMaterial = updater.fillMaterialProperty;
-        if (updaterMaterial === material) {
-            return true;
-        }
-        if (defined(material)) {
-            return material.equals(updaterMaterial);
-        }
-        return false;
     };
 
     Batch.prototype.add = function(time, updater) {
@@ -85,6 +74,7 @@ define([
 
     Batch.prototype.update = function(time) {
         var isUpdated = true;
+        var removedCount = 0;
         var primitive = this.primitive;
         var primitives = this.primitives;
         var geometries = this.geometry.values;
@@ -154,10 +144,12 @@ define([
             this.material = MaterialProperty.getValue(time, this.materialProperty, this.material);
             this.primitive.appearance.material = this.material;
 
+            var updater;
+            var updaters = this.updaters.values;
             var updatersWithAttributes = this.updatersWithAttributes.values;
             var length = updatersWithAttributes.length;
             for (i = 0; i < length; i++) {
-                var updater = updatersWithAttributes[i];
+                updater = updatersWithAttributes[i];
                 var entity = updater.entity;
                 var instance = this.geometry.get(entity.id);
 
@@ -174,10 +166,24 @@ define([
                 }
             }
 
+            length = updaters.length;
+            for (i = 0; i < length; i++) {
+                updater = updaters[i];
+                if (!updater.castShadowsProperty.isConstant || !updater.receiveShadowsProperty.isConstant) {
+                    var castShadows = updater.castShadowsProperty.getValue(time);
+                    var receiveShadows = updater.receiveShadowsProperty.getValue(time);
+                    if (this.castShadows !== castShadows || this.receiveShadows !== receiveShadows) {
+                        this.itemsToRemove[removedCount++] = updater;
+                    }
+                }
+            }
+
             this.updateShows(primitive);
         } else if (defined(primitive) && !primitive.ready) {
             isUpdated = false;
         }
+
+        this.itemsToRemove.length = removedCount;
         return isUpdated;
     };
 
@@ -239,85 +245,168 @@ define([
      * @private
      */
     function StaticGeometryPerMaterialBatch(primitives, appearanceType, closed) {
-        this._items = [];
         this._primitives = primitives;
         this._appearanceType = appearanceType;
         this._closed = closed;
+        this._batchesByMaterial = [];
     }
+
+    function isMaterial(material, other) {
+        if (material === other) {
+            return true;
+        }
+        if (defined(material) && defined(other)) {
+            return material.equals(other);
+        }
+        return false;
+    }
+
     StaticGeometryPerMaterialBatch.prototype.add = function(time, updater) {
-        var items = this._items;
-        var length = items.length;
+        var castShadows = updater.castShadowsProperty.getValue(time);
+        var receiveShadows = updater.receiveShadowsProperty.getValue(time);
+        var updaterMaterial = updater.fillMaterialProperty;
+
+        var batch;
+        var batches;
+        var batchesByMaterial = this._batchesByMaterial;
+        var batchKey = '' + (castShadows | 0) + (receiveShadows | 0);
+
+        var length = batchesByMaterial.length;
         for (var i = 0; i < length; i++) {
-            var item = items[i];
-            if (item.isMaterial(updater)) {
-                item.add(time, updater);
+            var material = batchesByMaterial[i].material;
+            batches = batchesByMaterial[i].batches;
+            if (isMaterial(material, updaterMaterial)) {
+                batch = batches.get(batchKey);
+                if (!defined(batch)) {
+                    batch = new Batch(this._primitives, this._appearanceType, updaterMaterial, this._closed, castShadows, receiveShadows);
+                    batches.set(batchKey, batch);
+                }
+                batch.add(time, updater);
                 return;
             }
         }
-        var batch = new Batch(this._primitives, this._appearanceType, updater.fillMaterialProperty, this._closed);
+
+        batch = new Batch(this._primitives, this._appearanceType, updaterMaterial, this._closed, castShadows, receiveShadows);
         batch.add(time, updater);
-        items.push(batch);
+        batches = new AssociativeArray();
+        batches.set(batchKey, batch);
+        batchesByMaterial.push({
+            material : updaterMaterial,
+            batches : batches
+        });
     };
 
     StaticGeometryPerMaterialBatch.prototype.remove = function(updater) {
-        var items = this._items;
-        var length = items.length;
-        for (var i = length - 1; i >= 0; i--) {
-            var item = items[i];
-            if (item.remove(updater)) {
-                if (item.updaters.length === 0) {
-                    items.splice(i, 1);
-                    item.destroy();
+        var batchesByMaterial = this._batchesByMaterial;
+        var materialsLength = batchesByMaterial.length;
+        for (var i = materialsLength - 1; i >= 0; i--) {
+            var batches = batchesByMaterial[i].batches.values;
+            var batchesLength = batches.length;
+            for (var j = batchesLength - 1; j >= 0; j--) {
+                var batch = batches[j];
+                if (batch.remove(updater)) {
+                    if (batch.updaters.values.length === 0) {
+                        batches.splice(j, 1);
+                        batch.destroy();
+                        if (batches.length === 0) {
+                            batchesByMaterial.splice(i, 1);
+                        }
+                    }
+                    break;
                 }
-                break;
             }
         }
     };
 
     StaticGeometryPerMaterialBatch.prototype.update = function(time) {
         var i;
-        var items = this._items;
-        var length = items.length;
+        var j;
+        var batches;
+        var batchesLength;
+        var batchesByMaterial = this._batchesByMaterial;
+        var materialsLength = batchesByMaterial.length;
 
-        for (i = length - 1; i >= 0; i--) {
-            var item = items[i];
-            if (item.invalidated) {
-                items.splice(i, 1);
-                var updaters = item.updaters.values;
-                var updatersLength = updaters.length;
-                for (var h = 0; h < updatersLength; h++) {
-                    this.add(time, updaters[h]);
+        for (i = materialsLength - 1; i >= 0; i--) {
+            batches = batchesByMaterial[i].batches.values;
+            batchesLength = batches.length;
+            for (j = batchesLength - 1; j >= 0; j--) {
+                var batch = batches[j];
+
+                if (batch.invalidated) {
+                    batches.splice(j, 1);
+                    var updaters = batch.updaters.values;
+                    var updatersLength = updaters.length;
+                    for (var h = 0; h < updatersLength; h++) {
+                        this.add(time, updaters[h]);
+                    }
+                    batch.destroy();
+                    if (batches.length === 0) {
+                        batchesByMaterial.splice(i, 1);
+                    }
+                } else {
+                    //If any items swapped between solid/translucent or changed cast/receive shadows,
+                    //we need to move them between batches
+                    var itemsToRemove = batch.itemsToRemove;
+                    var itemsToMoveLength = itemsToRemove.length;
+                    if (itemsToMoveLength > 0) {
+                        for (var k = 0; k < itemsToMoveLength; k++) {
+                            var updater = itemsToRemove[k];
+                            batch.remove(updater);
+                            this.add(time, updater);
+                        }
+                    }
+                    if (batch.updaters.values.length === 0) {
+                        batches.splice(j, 1);
+                        batch.destroy();
+                        if (batches.length === 0) {
+                            batchesByMaterial.splice(i, 1);
+                        }
+                    }
                 }
-                item.destroy();
             }
         }
 
         var isUpdated = true;
-        for (i = 0; i < length; i++) {
-            isUpdated = items[i].update(time) && isUpdated;
+        for (i = 0; i < materialsLength; i++) {
+            batches = batchesByMaterial[i].batches.values;
+            batchesLength = batches.length;
+            for (j = 0; j < batchesLength; j++) {
+                isUpdated = batches[j].update(time) && isUpdated;
+            }
         }
         return isUpdated;
     };
 
     StaticGeometryPerMaterialBatch.prototype.getBoundingSphere = function(entity, result) {
-        var items = this._items;
-        var length = items.length;
-        for (var i = 0; i < length; i++) {
-            var item = items[i];
-            if(item.contains(entity)){
-                return item.getBoundingSphere(entity, result);
+        var batchesByMaterial = this._batchesByMaterial;
+        var materialsLength = batchesByMaterial.length;
+
+        for (var i = 0; i < materialsLength; i++) {
+            var batches = batchesByMaterial[i].batches.values;
+            var batchesLength = batches.length;
+            for (var j = 0; j < batchesLength; j++) {
+                var batch = batches[j];
+                if (batch.contains(entity)) {
+                    return batch.getBoundingSphere(entity, result);
+                }
             }
         }
         return BoundingSphereState.FAILED;
     };
 
     StaticGeometryPerMaterialBatch.prototype.removeAllPrimitives = function() {
-        var items = this._items;
-        var length = items.length;
-        for (var i = 0; i < length; i++) {
-            items[i].destroy();
+        var batchesByMaterial = this._batchesByMaterial;
+        var materialsLength = batchesByMaterial.length;
+
+        for (var i = 0; i < materialsLength; i++) {
+            var batches = batchesByMaterial[i].batches.values;
+            var batchesLength = batches.length;
+            for (var j = 0; j < batchesLength; j++) {
+                batches[j].destroy();
+            }
         }
-        this._items.length = 0;
+
+        batchesByMaterial.length = 0;
     };
 
     return StaticGeometryPerMaterialBatch;
