@@ -130,10 +130,8 @@ define([
      * @param {Boolean} [options.softShadows=false] Whether percentage-closer-filtering is enabled for producing softer shadows.
      * @param {Number} [options.darkness=0.3] The shadow darkness.
      *
-     * @see ShadowMapShader
-     *
      * @exception {DeveloperError} Only one or four cascades are supported.
-
+     *
      * @demo {@link http://cesiumjs.org/Cesium/Apps/Sandcastle/index.html?src=Shadows.html|Cesium Sandcastle Shadows Demo}
      */
     function ShadowMap(options) {
@@ -160,7 +158,6 @@ define([
         /**
          * Determines the darkness of the shadows.
          *
-         * @memberof ShadowMap.prototype
          * @type {Number}
          * @default 0.3
          */
@@ -170,7 +167,6 @@ define([
         /**
          * Determines the maximum distance of the shadow map. Only applicable for cascaded shadows. Larger distances may result in lower quality shadows.
          *
-         * @memberof ShadowMap.prototype
          * @type {Number}
          * @default 5000.0
          */
@@ -304,8 +300,12 @@ define([
         this.size = this._size;
     }
 
-    // Global maximum shadow distance used to prevent far off receivers from extending
-    // the shadow far plane. E.g. setting a tighter near/far when viewing a satellite in space.
+    /**
+     * Global maximum shadow distance used to prevent far off receivers from extending
+     * the shadow far plane. This helps set a tighter near/far when viewing objects from space.
+     *
+     * @private
+     */
     ShadowMap.MAXIMUM_DISTANCE = 20000.0;
 
     function ShadowPass(context) {
@@ -397,6 +397,7 @@ define([
          * @memberof ShadowMap.prototype
          * @type {Boolean}
          * @default false
+         * @private
          */
         dirty : {
             get : function() {
@@ -428,6 +429,7 @@ define([
          * @memberof ShadowMap.prototype
          * @type {Boolean}
          * @readonly
+         * @private
          */
         outOfView : {
             get : function() {
@@ -441,6 +443,7 @@ define([
          * @memberof ShadowMap.prototype
          * @type {ShadowMapCamera}
          * @readonly
+         * @private
          */
         shadowMapCamera : {
             get : function() {
@@ -454,6 +457,7 @@ define([
          * @memberof ShadowMap.prototype
          * @type {CullingVolume}
          * @readonly
+         * @private
          */
         shadowMapCullingVolume : {
             get : function() {
@@ -467,6 +471,7 @@ define([
          * @memberof ShadowMap.prototype
          * @type {ShadowPass[]}
          * @readonly
+         * @private
          */
         passes : {
             get : function() {
@@ -480,6 +485,7 @@ define([
          * @memberof ShadowMap.prototype
          * @type {DrawCommand[]}
          * @readonly
+         * @private
          */
         commandList : {
             get : function() {
@@ -493,6 +499,7 @@ define([
          * @memberof ShadowMap.prototype
          * @type {Boolean}
          * @readonly
+         * @private
          */
         isPointLight : {
             get : function() {
@@ -506,6 +513,7 @@ define([
          * @memberof ShadowMap.prototype
          * @type {Cartesian3}
          * @readonly
+         * @private
          */
         pointLightPosition : {
             get : function() {
@@ -519,6 +527,7 @@ define([
          * @memberof ShadowMap.prototype
          * @type {Number}
          * @readonly
+         * @private
          */
         pointLightRadius : {
             get : function() {
@@ -1406,6 +1415,9 @@ define([
         shadowMap._distance = far - near;
     }
 
+    /**
+     * @private
+     */
     ShadowMap.prototype.update = function(frameState) {
         updateCameras(this, frameState);
 
@@ -1450,6 +1462,9 @@ define([
         }
     };
 
+    /**
+     * @private
+     */
     ShadowMap.prototype.updatePass = function(context, shadowPass) {
         clearFramebuffer(this, context, shadowPass);
     };
@@ -1638,10 +1653,16 @@ define([
         return result;
     };
 
+    /**
+     * @private
+     */
     ShadowMap.prototype.isDestroyed = function() {
         return false;
     };
 
+    /**
+     * @private
+     */
     ShadowMap.prototype.destroy = function() {
         destroyFramebuffer(this);
 
