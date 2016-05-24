@@ -153,7 +153,7 @@ define([
 
         this._enabled = defaultValue(options.enabled, true);
         this._softShadows = defaultValue(options.softShadows, false);
-        this._dirty = false;
+        this._dirty = true;
 
         /**
          * Determines the darkness of the shadows.
@@ -270,7 +270,7 @@ define([
         this.debugShow = false;
         this.debugFreezeFrame = false;
         this._debugFreezeFrame = false;
-        this.debugCascadeColors = false;
+        this._debugCascadeColors = false;
         this._debugLightFrustum = undefined;
         this._debugCameraFrustum = undefined;
         this._debugCascadeFrustums = new Array(this._numberOfCascades);
@@ -533,6 +533,23 @@ define([
             get : function() {
                 return this._pointLightRadius;
             }
+        },
+
+        /**
+         * Debug option for visualizing the cascades by color.
+         *
+         * @memberof ShadowMap.prototype
+         * @type {Boolean}
+         * @default false
+         */
+        debugCascadeColors : {
+            get : function() {
+                return this._debugCascadeColors;
+            },
+            set : function(value) {
+                this._dirty = this._debugCascadeColors !== value;
+                this._debugCascadeColors = value;
+            }
         }
     });
 
@@ -699,6 +716,7 @@ define([
     }
 
     function resize(shadowMap, size) {
+        shadowMap._size = size;
         var passes = shadowMap._passes;
         var numberOfPasses = passes.length;
         var textureSize = shadowMap._textureSize;
@@ -962,7 +980,7 @@ define([
         return debugFrustum;
     }
 
-    var debugCascadeColors = [Color.RED, Color.GREEN, Color.BLUE, Color.MAGENTA];
+    var debugOutlineColors = [Color.RED, Color.GREEN, Color.BLUE, Color.MAGENTA];
     var scratchScale = new Cartesian3();
 
     function applyDebugSettings(shadowMap, frameState) {
@@ -995,7 +1013,7 @@ define([
                     if (enterFreezeFrame) {
                         // Recreate debug frustum when entering freeze frame mode
                         shadowMap._debugCascadeFrustums[i] = shadowMap._debugCascadeFrustums[i] && shadowMap._debugCascadeFrustums[i].destroy();
-                        shadowMap._debugCascadeFrustums[i] = createDebugFrustum(shadowMap._passes[i].camera, debugCascadeColors[i]);
+                        shadowMap._debugCascadeFrustums[i] = createDebugFrustum(shadowMap._passes[i].camera, debugOutlineColors[i]);
                     }
                     shadowMap._debugCascadeFrustums[i].update(frameState);
                 }
@@ -1365,18 +1383,6 @@ define([
         var sceneCamera = shadowMap._sceneCamera; // Clone of camera, with clamped near and far planes
         var shadowMapCamera = shadowMap._shadowMapCamera; // Camera representing the shadow volume, initially cloned from lightCamera
 
-        if (defined(sceneCamera)) {
-            // Skip check on the first frame
-            checkVisibility(shadowMap, frameState);
-        }
-
-        // Clear the shadow texture when a cascaded shadow map goes out of view (e.g. when the sun dips below the horizon).
-        // This prevents objects that still read from the shadow map from reading old values.
-        if (shadowMap._cascadesEnabled && !shadowMap._outOfViewPrevious && shadowMap._outOfView) {
-            clearFramebuffer(shadowMap, frameState.context);
-        }
-        shadowMap._outOfViewPrevious = shadowMap._outOfView;
-
         // Clone light camera into the shadow map camera
         if (shadowMap._cascadesEnabled) {
             Cartesian3.clone(lightCamera.directionWC, shadowMapCamera.directionWC);
@@ -1413,6 +1419,15 @@ define([
         shadowMap._sceneCamera.frustum.near = near;
         shadowMap._sceneCamera.frustum.far = far;
         shadowMap._distance = far - near;
+
+        checkVisibility(shadowMap, frameState);
+
+        // Clear the shadow texture when a cascaded shadow map goes out of view (e.g. when the sun dips below the horizon).
+        // This prevents objects that still read from the shadow map from reading old values.
+        if (shadowMap._cascadesEnabled && !shadowMap._outOfViewPrevious && shadowMap._outOfView) {
+            clearFramebuffer(shadowMap, frameState.context);
+        }
+        shadowMap._outOfViewPrevious = shadowMap._outOfView;
     }
 
     /**

@@ -1067,7 +1067,8 @@ define([
         var context = scene._context;
 
         var shadowsDirty = false;
-        if (shadowMaps.length > 0 && (command.receiveShadows || command.castShadows)) {
+        var shadowsVisible = !frameState.shadowHints.outOfView;
+        if (shadowsVisible && (command.receiveShadows || command.castShadows)) {
             // Update derived commands when any shadow maps become dirty
             var lastDirtyTime = frameState.shadowHints.lastDirtyTime;
             if (command._lastDirtyTime !== lastDirtyTime) {
@@ -1076,19 +1077,19 @@ define([
                 shadowsDirty = true;
             }
         }
-        
+
         if (command._dirty) {
             command._dirty = false;
 
             var derivedCommands = command.derivedCommands;
 
-            if (shadowMaps.length > 0 && (command.receiveShadows || command.castShadows)) {
+            if (shadowsVisible && (command.receiveShadows || command.castShadows)) {
                 derivedCommands.shadows = ShadowMap.createDerivedCommands(shadowMaps, command, shadowsDirty, context, derivedCommands.shadows);
             }
 
             var oit = scene._oit;
             if (command.pass === Pass.TRANSLUCENT && defined(oit) && oit.isSupported()) {
-                if (shadowMaps.length > 0 && command.receiveShadows) {
+                if (shadowsVisible && command.receiveShadows) {
                     derivedCommands.oit = oit.createDerivedCommands(command.derivedCommands.shadows.receiveCommand, context, derivedCommands.oit);
                 } else {
                     derivedCommands.oit = oit.createDerivedCommands(command, context, derivedCommands.oit);
@@ -1292,7 +1293,7 @@ define([
                     if (updateShadowHints && command.receiveShadows && (distances.start < ShadowMap.MAXIMUM_DISTANCE) &&
                         !((pass === Pass.GLOBE) && (distances.start < -100.0) && (distances.stop > 100.0))) {
 
-                        // Get the smallest bounding volume the camera is near. This is used to improve cascaded shadow splits.
+                        // Get the smallest bounding volume the camera is near. This is used to place more shadow detail near the object.
                         var size = distances.stop - distances.start;
                         if ((pass !== Pass.GLOBE) && (distances.start < 100.0)) {
                             shadowClosestObjectSize = Math.min(shadowClosestObjectSize, size);
@@ -1425,7 +1426,7 @@ define([
 
         if (scene.debugShowCommands || scene.debugShowFrustums) {
             executeDebugCommand(command, scene, passState);
-        } else if (!scene.frameState.passes.pick && scene.frameState.shadowMaps.length > 0 && command.receiveShadows) {
+        } else if (!scene.frameState.passes.pick && !scene.frameState.shadowHints.outOfView && command.receiveShadows) {
             command.derivedCommands.shadows.receiveCommand.execute(context, passState);
         } else {
             command.execute(context, passState);
@@ -1817,7 +1818,7 @@ define([
         var shadowMaps = frameState.shadowMaps;
         var shadowMapLength = shadowMaps.length;
 
-        if (shadowMapLength === 0 || scene.frameState.passes.picking) {
+        if (shadowMapLength === 0 || scene.frameState.passes.pick) {
             return;
         }
 
@@ -2060,10 +2061,12 @@ define([
         var shadowMaps = frameState.shadowMaps;
         var length = shadowMaps.length;
 
+        frameState.shadowHints.outOfView = true;
+        
         if (length === 0 || frameState.passes.pick) {
             return;
         }
-
+        
         for (var i = 0; i < length; ++i) {
             var shadowMap = shadowMaps[i];
             shadowMap.update(frameState);
@@ -2073,26 +2076,30 @@ define([
                 shadowMap.dirty = false;
             }
 
-            if (!shadowMap.outOfView && defined(globe) && globe.castShadows) {
-                var sceneCamera = frameState.camera;
-                var sceneCullingVolume = frameState.cullingVolume;
-                var sceneCommandList = frameState.commandList;
+            if (!shadowMap.outOfView) {
+                frameState.shadowHints.outOfView = false;
 
-                // Update frame state to render from the light camera
-                frameState.camera = shadowMap.shadowMapCamera;
-                frameState.cullingVolume = shadowMap.shadowMapCullingVolume;
-                frameState.commandList = shadowMap.commandList;
+                if (defined(globe) && globe.castShadows) {
+                    var sceneCamera = frameState.camera;
+                    var sceneCullingVolume = frameState.cullingVolume;
+                    var sceneCommandList = frameState.commandList;
 
-                frameState.commandList.length = 0;
+                    // Update frame state to render from the light camera
+                    frameState.camera = shadowMap.shadowMapCamera;
+                    frameState.cullingVolume = shadowMap.shadowMapCullingVolume;
+                    frameState.commandList = shadowMap.commandList;
 
-                // Update the globe again to Collect terrain commands from the light's POV.
-                // Primitives do not need to be updated twice because they typically aren't culled by the scene camera.
-                globe.update(frameState);
+                    frameState.commandList.length = 0;
 
-                // Revert back to original frame state
-                frameState.camera = sceneCamera;
-                frameState.cullingVolume = sceneCullingVolume;
-                frameState.commandList = sceneCommandList;
+                    // Update the globe again to collect terrain commands from the light's POV.
+                    // Primitives do not need to be updated twice because they typically aren't culled by the scene camera.
+                    globe.update(frameState);
+
+                    // Revert back to original frame state
+                    frameState.camera = sceneCamera;
+                    frameState.cullingVolume = sceneCullingVolume;
+                    frameState.commandList = sceneCommandList;
+                }
             }
         }
     }
