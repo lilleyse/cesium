@@ -12,6 +12,7 @@ define([
         '../Core/Intersect',
         '../Core/isDataUri',
         '../Core/joinUrls',
+        '../Core/JulianDate',
         '../Core/loadJson',
         '../Core/Math',
         '../Core/Request',
@@ -20,6 +21,7 @@ define([
         '../ThirdParty/Uri',
         '../ThirdParty/when',
         './Cesium3DTile',
+        './Cesium3DTileContentState',
         './Cesium3DTileRefine',
         './Cesium3DTileStyleEngine',
         './CullingVolume',
@@ -37,6 +39,7 @@ define([
         Intersect,
         isDataUri,
         joinUrls,
+        JulianDate,
         loadJson,
         CesiumMath,
         Request,
@@ -45,6 +48,7 @@ define([
         Uri,
         when,
         Cesium3DTile,
+        Cesium3DTileContentState,
         Cesium3DTileRefine,
         Cesium3DTileStyleEngine,
         CullingVolume,
@@ -794,15 +798,30 @@ define([
             return;
         }
 
+        var expired = (tile.content.state === Cesium3DTileContentState.EXPIRED);
+
         tile.requestContent();
 
-        if (!tile.contentUnloaded) {
+        // If the RequestScheduler is full, the content will remain in the UNLOADED or EXPIRED state.
+        // Otherwise, it will be in the LOADING state.
+        if (tile.content.state === Cesium3DTileContentState.LOADING) {
             var stats = tileset._statistics;
             ++stats.numberOfPendingRequests;
 
             var removeFunction = removeFromProcessingQueue(tileset, tile);
-            when(tile.content.contentReadyToProcessPromise).then(addToProcessingQueue(tileset, tile)).otherwise(removeFunction);
-            when(tile.content.readyPromise).then(removeFunction).otherwise(removeFunction);
+            when(tile.content.contentReadyToProcessPromise).then(function() {
+                updateExpireDate(tile);
+                addToProcessingQueue(tileset, tile);
+            }).otherwise(removeFunction);
+
+            when(tile.content.readyPromise).then(removeFunction).otherwise(function() {
+                removeFunction();
+                if (expired) {
+                    tile.unloadContent();
+                    // TODO : but also don't let it fetch again
+                    // TODO : set the state to EXPIRED??
+                }
+            });
         }
     }
 
@@ -894,6 +913,20 @@ define([
             // Tile is inside/intersects the view frustum.  How many pixels is its geometric error?
             var sse = getScreenSpaceError(t.geometricError, t, frameState);
             // PERFORMANCE_IDEA: refine also based on (1) occlusion/VMSSE and/or (2) center of viewport
+
+            // If the tile is expired, request new content
+            if (defined(t.expireDate)) {
+                var now = JulianDate.now(scratchJulianDate);
+                if (JulianDate.lessThan(now, t.expireDate)) {
+                    // Request new content
+                    if (t.hasContent) {
+                        t.content.state = Cesium3DTileContentState.EXPIRED;
+                        requestContent(tileset, t, outOfCore);
+                    } else if (t.hasTilesetContent) {
+                        // TODO : do something different
+                    }
+                }
+            }
 
             var children = t.children;
             var childrenLength = children.length;
@@ -1062,13 +1095,26 @@ define([
 
     ///////////////////////////////////////////////////////////////////////////
 
-    function addToProcessingQueue(tileset, tile) {
-        return function() {
-            tileset._processingQueue.push(tile);
+    var scratchJulianDate = new JulianDate();
 
-            --tileset._statistics.numberOfPendingRequests;
-            ++tileset._statistics.numberProcessing;
-        };
+    function updateExpireDate(tile) {
+        if (defined(tile.expireDuration)) {
+            var expireDurationDate = JulianDate.now(scratchJulianDate);
+            JulianDate.addSeconds(expireDurationDate, tile.expireDuration, expireDurationDate);
+
+            if (defined(tile.expireDate)) {
+                if (JulianDate.lessThan(expireDurationDate, tile.expireDate)) {
+                    JulianDate.clone(expireDurationDate, tile.expireDate);
+                }
+            }
+        }
+    }
+
+    function addToProcessingQueue(tileset, tile) {
+        tileset._processingQueue.push(tile);
+
+        --tileset._statistics.numberOfPendingRequests;
+        ++tileset._statistics.numberProcessing;
     }
 
     function removeFromProcessingQueue(tileset, tile) {
