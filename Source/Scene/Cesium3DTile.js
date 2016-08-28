@@ -13,6 +13,7 @@ define([
         '../Core/getExtensionFromUri',
         '../Core/Intersect',
         '../Core/joinUrls',
+        '../Core/Math',
         '../Core/Matrix3',
         '../Core/Matrix4',
         '../Core/OrientedBoundingBox',
@@ -45,6 +46,7 @@ define([
         getExtensionFromUri,
         Intersect,
         joinUrls,
+        CesiumMath,
         Matrix3,
         Matrix4,
         OrientedBoundingBox,
@@ -540,6 +542,9 @@ define([
     var scratchCenter = new Cartesian3();
     var scratchRectangle = new Rectangle();
 
+    var yUpToZUpMatrix3 = Matrix3.fromRotationX(CesiumMath.PI_OVER_TWO);
+    var yUpToZUpMatrix4 = Matrix4.fromRotationTranslation(yUpToZUpMatrix3);
+
     /**
      * Create a bounding volume from the tile's bounding volume header.
      *
@@ -553,10 +558,17 @@ define([
      */
     Cesium3DTile.prototype.createBoundingVolume = function(boundingVolumeHeader, transform, result) {
         var center;
+        var hasTileTransform = !Matrix4.equals(this.computedTransform, Matrix4.IDENTITY);
         if (defined(boundingVolumeHeader.box)) {
             var box = boundingVolumeHeader.box;
             center = Cartesian3.fromElements(box[0], box[1], box[2], scratchCenter);
             var halfAxes = Matrix3.fromArray(box, 3, scratchHalfAxes);
+
+            if (hasTileTransform) {
+                // Transform from y-up to z-up
+                Matrix3.multiply(yUpToZUpMatrix3, halfAxes, halfAxes);
+                Matrix4.multiplyByPoint(yUpToZUpMatrix4, center, center);
+            }
 
             // Find the transformed center and halfAxes
             center = Matrix4.multiplyByPoint(transform, center, center);
@@ -585,6 +597,11 @@ define([
             var sphere = boundingVolumeHeader.sphere;
             center = Cartesian3.fromElements(sphere[0], sphere[1], sphere[2], scratchCenter);
             var radius = sphere[3];
+
+            if (hasTileTransform) {
+                // Transform from y-up to z-up
+                Matrix4.multiplyByPoint(yUpToZUpMatrix4, center, center);
+            }
 
             // Find the transformed center and radius
             center = Matrix4.multiplyByPoint(transform, center, center);
