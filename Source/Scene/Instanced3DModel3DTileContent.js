@@ -477,6 +477,7 @@ define([
         // the content's resource loading.  In the READY state, it will
         // actually generate commands.
         this.batchTable.update(tileset, frameState);
+        this._modelInstanceCollection.transform = this._tile.computedTransform;
         this._modelInstanceCollection.update(frameState);
 
         frameState.addCommand = oldAddCommand;

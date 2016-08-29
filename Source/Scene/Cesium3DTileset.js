@@ -872,6 +872,7 @@ define([
         root.parentPlaneMask = CullingVolume.MASK_INDETERMINATE;
 
         if (getScreenSpaceError(tileset._geometricError, root, frameState) <= maximumScreenSpaceError) {
+            console.log('fail');
             // The SSE of not rendering the tree is small enough that the tree does not need to be rendered
             return;
         }

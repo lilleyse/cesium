@@ -1431,4 +1431,8 @@ defineSuite([
         }).toThrowDeveloperError();
     });
 
+    it('propagates tile transform down the tree', function() {
+
+    });
+
 }, 'WebGL');
