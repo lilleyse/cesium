@@ -118,14 +118,14 @@ define([
             width : width,
             height : height,
             pixelFormat : PixelFormat.RGBA,
-            pixelDatatype : PixelDatatype.FLOAT
+            pixelDatatype : PixelDatatype.UNSIGNED_BYTE
         });
         oit._revealageTexture = new Texture({
             context : context,
             width : width,
             height : height,
             pixelFormat : PixelFormat.RGBA,
-            pixelDatatype : PixelDatatype.FLOAT
+            pixelDatatype : PixelDatatype.UNSIGNED_BYTE
         });
     }
 
@@ -560,16 +560,21 @@ define([
         var shadowsEnabled = scene.frameState.shadowHints.shadowsEnabled;
 
         passState.framebuffer = oit._adjustTranslucentFBO;
+        oit._adjustTranslucentFBO._bind();
         oit._adjustTranslucentCommand.execute(context, passState);
+        // var pixels = new Uint8Array(4);
+        // scene.context._gl.readPixels(0,0,1,1,WebGLConstants.RGBA, WebGLConstants.UNSIGNED_BYTE, pixels);
+        // // Value is CORRECT here
+        // oit._adjustTranslucentFBO._unBind();
 
-        var debugFramebuffer = oit._opaqueFBO;
-        passState.framebuffer = oit._translucentFBO;
-
-        for (var j = 0; j < length; ++j) {
-            var command = commands[j];
-            var derivedCommand = (shadowsEnabled && command.receiveShadows) ? command.derivedCommands.oit.shadows.translucentCommand : command.derivedCommands.oit.translucentCommand;
-            executeFunction(derivedCommand, scene, context, passState, debugFramebuffer);
-        }
+        // var debugFramebuffer = oit._opaqueFBO;
+        // passState.framebuffer = oit._translucentFBO;
+        //
+        // for (var j = 0; j < length; ++j) {
+        //     var command = commands[j];
+        //     var derivedCommand = (shadowsEnabled && command.receiveShadows) ? command.derivedCommands.oit.shadows.translucentCommand : command.derivedCommands.oit.translucentCommand;
+        //     executeFunction(derivedCommand, scene, context, passState, debugFramebuffer);
+        // }
 
         passState.framebuffer = framebuffer;
     }
@@ -582,9 +587,18 @@ define([
 
         executeTranslucentCommandsSortedMultipass(this, scene, executeFunction, passState, commands);
     };
-
+    var i = 0;
     OIT.prototype.execute = function(context, passState) {
+        // this._adjustTranslucentFBO._bind();
+        // var pixels = new Uint8Array(4);
+        // context._gl.readPixels(0,0,1,1,WebGLConstants.RGBA, WebGLConstants.UNSIGNED_BYTE, pixels);
+        // //console.log(pixels);
+        // this._adjustTranslucentFBO._unBind();
+
         this._compositeCommand.execute(context, passState);
+        if (++i === 1) {
+            console.log(this._compositeCommand);
+        }
     };
 
     OIT.prototype.clear = function(context, passState, clearColor) {

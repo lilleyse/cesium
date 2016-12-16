@@ -9,16 +9,6 @@ varying vec2 v_textureCoordinates;
 
 void main()
 {
-    if (texture2D(u_depthTexture, v_textureCoordinates).r < 1.0)
-    {
-#ifdef MRT
-        gl_FragData[0] = u_bgColor;
-        gl_FragData[1] = vec4(u_bgColor.a);
-#else
-        gl_FragColor = u_bgColor;
-#endif
-        return;
-    }
-    
-    discard;
+    gl_FragData[0] = vec4(0.5);
+    gl_FragData[1] = vec4(0.5);
 }
