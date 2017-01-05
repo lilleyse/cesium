@@ -1,5 +1,7 @@
 /*global define*/
 define([
+        '../Core/Cartesian2',
+        '../Core/Cartesian3',
         '../Core/Cartesian4',
         '../Core/Color',
         '../Core/defined',
@@ -10,6 +12,8 @@ define([
         '../ThirdParty/jsep',
         './ExpressionNodeType'
     ], function(
+        Cartesian2,
+        Cartesian3,
         Cartesian4,
         Color,
         defined,
@@ -33,28 +37,42 @@ define([
 
     var ScratchStorage = {
         scratchColorIndex : 0,
-        scratchColors : [new Color()],
-        scratchCartesianIndex : 0,
-        scratchCartesians : [new Cartesian4()],
+        scratchColorArray : [new Color()],
+        scratchCartesian2Index : 0,
+        scratchCartesian3Index : 0,
+        scratchCartesian4Index : 0,
+        scratchCartesian2Array : [new Cartesian2()],
+        scratchCartesian3Array : [new Cartesian3()],
+        scratchCartesian4Array : [new Cartesian4()],
         reset : function() {
             this.scratchColorIndex = 0;
-            this.scratchCartesianIndex = 0;
+            this.scratchCartesian2Index = 0;
+            this.scratchCartesian3Index = 0;
+            this.scratchCartesian4Index = 0;
         },
         getColor : function() {
-            if (this.scratchColorIndex >= this.scratchColors.length) {
-                this.scratchColors.push(new Color());
+            if (this.scratchColorIndex >= this.scratchColorArray.length) {
+                this.scratchColorArray.push(new Color());
             }
-            var scratchColor = this.scratchColors[this.scratchColorIndex];
-            ++this.scratchColorIndex;
-            return scratchColor;
+            return this.scratchColorArray[this.scratchColorIndex++];
         },
-        getCartesian : function() {
-            if (this.scratchCartesianIndex >= this.scratchCartesians.length) {
-                this.scratchCartesians.push(new Cartesian4());
+        getCartesian2 : function() {
+            if (this.scratchCartesian2Index >= this.scratchCartesian2Array.length) {
+                this.scratchCartesian2Array.push(new Cartesian2());
             }
-            var scratchCartesian = this.scratchCartesians[this.scratchCartesianIndex];
-            ++this.scratchCartesianIndex;
-            return scratchCartesian;
+            return this.scratchCartesian2Array[this.scratchCartesian2Index++];
+        },
+        getCartesian3 : function() {
+            if (this.scratchCartesian3Index >= this.scratchCartesian3Array.length) {
+                this.scratchCartesian3Array.push(new Cartesian3());
+            }
+            return this.scratchCartesian3Array[this.scratchCartesian3Index++];
+        },
+        getCartesian4 : function() {
+            if (this.scratchCartesian4Index >= this.scratchCartesian4Array.length) {
+                this.scratchCartesian4Array.push(new Cartesian4());
+            }
+            return this.scratchCartesian4Array[this.scratchCartesian4Index++];
         }
     };
 
@@ -156,19 +174,18 @@ define([
      * is of type <code>Boolean</code>, <code>Number</code>, or <code>String</code>, the corresponding JavaScript
      * primitive type will be returned. If the result is a <code>RegExp</code>, a Javascript <code>RegExp</code>
      * object will be returned. If the result is a <code>Color</code>, a {@link Color} object will be returned.
-     * If the result is a <code>Cartesian4</code>, a {@link Cartesian4} object will be returned.
+     * If the result is a <code>Cartesian2</code>, <code>Cartesian3</code>, or <code>Cartesian4</code>,
+     * a {@link Cartesian2}, {@link Cartesian3}, or {@link Cartesian4} object will be returned.
      *
      * @param {FrameState} frameState The frame state.
      * @param {Cesium3DTileFeature} feature The feature who's properties may be used as variables in the expression.
-     * @returns {Boolean|Number|String|Color|Cartesian4|RegExp} The result of evaluating the expression.
+     * @returns {Boolean|Number|String|Color|Cartesian2|Cartesian3|Cartesian4|RegExp} The result of evaluating the expression.
      */
     Expression.prototype.evaluate = function(frameState, feature) {
         ScratchStorage.reset();
         var result = this._runtimeAst.evaluate(frameState, feature);
-        if (result instanceof Color) {
-            return Color.clone(result);
-        } else if (result instanceof Cartesian4) {
-            return Cartesian4.clone(result);
+        if ((result instanceof Color) || (result instanceof Cartesian2) || (result instanceof Cartesian3) || (result instanceof Cartesian4)) {
+            return result.clone();
         }
         return result;
     };
@@ -302,6 +319,7 @@ define([
 
     function parseCall(expression, ast) {
         var args = ast.arguments;
+        var argsLength = args.length;
         var call;
         var val, left, right;
 
@@ -316,7 +334,7 @@ define([
                     throw new DeveloperError('Error: ' + call + ' is not a function.');
                 }
                 //>>includeEnd('debug');
-                if (args.length === 0) {
+                if (argsLength === 0) {
                     if (call === 'test') {
                         return new Node(ExpressionNodeType.LITERAL_BOOLEAN, false);
                     } else {
@@ -339,7 +357,7 @@ define([
         // Non-member function calls
         call = ast.callee.name;
         if (call === 'color') {
-            if (args.length === 0) {
+            if (argsLength === 0) {
                 return new Node(ExpressionNodeType.LITERAL_COLOR, call);
             }
             val = createRuntimeAst(expression, args[0]);
@@ -350,7 +368,7 @@ define([
             return new Node(ExpressionNodeType.LITERAL_COLOR, call, [val]);
         } else if (call === 'rgb' || call === 'hsl') {
             //>>includeStart('debug', pragmas.debug);
-            if (args.length < 3) {
+            if (argsLength < 3) {
                 throw new DeveloperError('Error: ' + call + ' requires three arguments.');
             }
             //>>includeEnd('debug');
@@ -362,7 +380,7 @@ define([
            return new Node(ExpressionNodeType.LITERAL_COLOR, call, val);
         } else if (call === 'rgba' || call === 'hsla') {
             //>>includeStart('debug', pragmas.debug);
-            if (args.length < 4) {
+            if (argsLength < 4) {
                 throw new DeveloperError('Error: ' + call + ' requires four arguments.');
             }
             //>>includeEnd('debug');
@@ -374,15 +392,20 @@ define([
             ];
             return new Node(ExpressionNodeType.LITERAL_COLOR, call, val);
         } else if (call === 'vec2' || call === 'vec3' || call === 'vec4') {
-            val = [
-                defined(args[0]) ? createRuntimeAst(expression, args[0]) : new Node(ExpressionNodeType.LITERAL_NUMBER, 0),
-                defined(args[1]) ? createRuntimeAst(expression, args[1]) : new Node(ExpressionNodeType.LITERAL_NUMBER, 0),
-                defined(args[2]) ? createRuntimeAst(expression, args[2]) : new Node(ExpressionNodeType.LITERAL_NUMBER, 0),
-                defined(args[3]) ? createRuntimeAst(expression, args[3]) : new Node(ExpressionNodeType.LITERAL_NUMBER, 0)
-            ];
+            //>>includeStart('debug', pragmas.debug);
+            var vectorLength = parseInt(call.charAt(3));
+            if (argsLength === 0 || argsLength > vectorLength) {
+                // Check that the call has a valid number of arguments. Other checks can only occur at evaluation time.
+                throw new DeveloperError('Error: invalid number of arguments (' + argsLength + ') for' + call);
+            }
+            //>>includeEnd('debug', pragmas.debug);
+            val = new Array(argsLength);
+            for (var i = 0; i < argsLength; ++i) {
+                val[i] = createRuntimeAst(expression, args[i]);
+            }
             return new Node(ExpressionNodeType.LITERAL_VECTOR, call, val);
         } else if (call === 'isNaN' || call === 'isFinite') {
-            if (args.length === 0) {
+            if (argsLength === 0) {
                 if (call === 'isNaN') {
                     return new Node(ExpressionNodeType.LITERAL_BOOLEAN, true);
                 } else {
@@ -393,7 +416,7 @@ define([
             return new Node(ExpressionNodeType.UNARY, call, val);
         } else if (call === 'isExactClass' || call === 'isClass') {
             //>>includeStart('debug', pragmas.debug);
-            if (args.length < 1 || args.length > 1) {
+            if (argsLength < 1 || argsLength > 1) {
                 throw new DeveloperError('Error: ' + call + ' requires exactly one argument.');
             }
             //>>includeEnd('debug');
@@ -401,14 +424,14 @@ define([
             return new Node(ExpressionNodeType.UNARY, call, val);
         } else if (call === 'getExactClassName') {
             //>>includeStart('debug', pragmas.debug);
-            if (args.length > 0) {
+            if (argsLength > 0) {
                 throw new DeveloperError('Error: ' + call + ' does not take any argument.');
             }
             //>>includeEnd('debug');
             return new Node(ExpressionNodeType.UNARY, call);
         } else if (defined(unaryFunctions[call])) {
             //>>includeStart('debug', pragmas.debug);
-            if (args.length !== 1) {
+            if (argsLength !== 1) {
                 throw new DeveloperError('Error: ' + call + ' requires exactly one argument.');
             }
             //>>includeEnd('debug');
@@ -416,7 +439,7 @@ define([
             return new Node(ExpressionNodeType.UNARY, call, val);
         } else if (defined(binaryFunctions[call])) {
             //>>includeStart('debug', pragmas.debug);
-            if (args.length !== 2) {
+            if (argsLength !== 2) {
                 throw new DeveloperError('Error: ' + call + ' requires exactly two arguments.');
             }
             //>>includeEnd('debug');
@@ -425,7 +448,7 @@ define([
             return new Node(ExpressionNodeType.BINARY, call, left, right);
         } else if (defined(ternaryFunctions[call])) {
             //>>includeStart('debug', pragmas.debug);
-            if (args.length !== 3) {
+            if (argsLength !== 3) {
                 throw new DeveloperError('Error: ' + call + ' requires exactly three arguments.');
             }
             //>>includeEnd('debug');
@@ -434,19 +457,19 @@ define([
             var test = createRuntimeAst(expression, args[2]);
             return new Node(ExpressionNodeType.TERNARY, call, left, right, test);
         } else if (call === 'Boolean') {
-            if (args.length === 0) {
+            if (argsLength === 0) {
                 return new Node(ExpressionNodeType.LITERAL_BOOLEAN, false);
             }
             val = createRuntimeAst(expression, args[0]);
             return new Node(ExpressionNodeType.UNARY, call, val);
         } else if (call === 'Number') {
-            if (args.length === 0) {
+            if (argsLength === 0) {
                 return new Node(ExpressionNodeType.LITERAL_NUMBER, 0);
             }
             val = createRuntimeAst(expression, args[0]);
             return new Node(ExpressionNodeType.UNARY, call, val);
         } else if (call === 'String') {
-            if (args.length === 0) {
+            if (argsLength === 0) {
                 return new Node(ExpressionNodeType.LITERAL_STRING, '');
             }
             val = createRuntimeAst(expression, args[0]);
@@ -790,9 +813,93 @@ define([
         return result;
     };
 
+    function evaluateVec2(components) {
+
+    }
+
+    function evaluateVec3(components) {
+
+    }
+
+    function evaluateVec4(components) {
+
+    }
+
+    var scratchComponents = [];
     Node.prototype._evaluateLiteralVector = function(frameState, feature) {
-        var result = ScratchStorage.getCartesian();
+        // Gather the components that make up the vector, which includes components from interior vectors.
+        // For example vec3(1, 2, 3) or vec3(vec2(1, 2), 3) are both valid.
+        //
+        // If the number of components does not equal the vector's size, then a DeveloperError is thrown - with two exceptions:
+        // 1. A vector may be constructed from a larger vector and drop the extra components.
+        // 2. A vector may be constructed from a single component - vec3(1) will become vec3(1, 1, 1).
+        //
+        // Examples of invalid constructors include:
+        // vec4(1, 2)        // not enough components
+        // vec3(vec2(1, 2))  // not enough components
+        // vec3(1, 2, 3, 4)  // too many components
+        // vec2(vec4(1), 1)  // too many components
+
+        var components = scratchComponents;
+        components.length = 0;
+
         var args = this._left;
+        var argsLength = args.length;
+        for (var i = 0; i < argsLength; ++i) {
+            var value = args[i].evaluate(frameState, feature);
+            if (value instanceof Cartesian2) {
+                components.push(value.x, value.y);
+            } else if (value instanceof Cartesian3) {
+                components.push(value.x, value.y, value.z);
+            } else if (value instanceof Cartesian4) {
+                components.push(value.x, value.x, value.y, value.w);
+            } else if (typeof(value) === 'number') {
+                components.push(value);
+            }
+        }
+
+        var componentsLength = components.length;
+        var call = this._value;
+        var vectorLength = parseInt(call.charAt(3));
+
+        if (componentsLength === 0) {
+            // vec2()
+        } else if (componentsLength === 1) {
+            // vec2(1)
+        } else if (componentsLength < vectorLength) {
+            // vec4(vec2(1, 2), 3)
+        } else if ((componentsLength > vectorLength) && (argsLength > 1)) {
+            // vec3(vec3(1, 2, 3), 4)
+            //>>includeStart('debug', pragmas.debug);
+            throw new DeveloperError('Error: Invalid ' + call + ' constructor. Too many arguments.');
+            //>>includeEnd('debug');
+        }
+
+        if (componentsLength > 1 && componentsLength < vectorLength)
+
+            if (argsLength > 1 && componentsLength > )
+
+
+                if (componentsLength === 1) {
+                    // Add the same component 3 more times
+                    components.push(components[0]);
+                    components.push(components[0]);
+                    components.push(components[0]);
+                }
+
+
+        if (type === 'vec2') {
+            evaluateVec2(components);
+        }
+
+
+
+
+
+
+
+
+
         return Cartesian4.fromElements(
             args[0].evaluate(frameState, feature),
             args[1].evaluate(frameState, feature),
@@ -878,8 +985,9 @@ define([
             } else if (member === 3 || member === 'w') {
                 return property.alpha;
             }
-        } else if (property instanceof Cartesian4) {
+        } else if ((property instanceof Cartesian2) || (property instanceof Cartesian3) || (property instanceof Cartesian4)) {
             // Vector components may be accessed with [0][1][2][3] and implicitly with ['x']['y']['z']['w']
+            // For Cartesian2 and Cartesian3 out-of-range components will just return undefined
             if (member === 0) {
                 return property.x;
             } else if (member === 1) {
@@ -910,15 +1018,19 @@ define([
 
     Node.prototype._evaluateNegative = function(frameState, feature) {
         var left = this._left.evaluate(frameState, feature);
-        if (left instanceof Cartesian4) {
-            return Cartesian4.negate(left, ScratchStorage.getCartesian());
+        if (left instanceof Cartesian2) {
+            return Cartesian2.negate(left, ScratchStorage.getCartesian2());
+        } else if (left instanceof Cartesian3) {
+            return Cartesian3.negate(left, ScratchStorage.getCartesian3());
+        } else if (left instanceof Cartesian4) {
+            return Cartesian4.negate(left, ScratchStorage.getCartesian4());
         }
         return -left;
     };
 
     Node.prototype._evaluatePositive = function(frameState, feature) {
         var left = this._left.evaluate(frameState, feature);
-        if ((left instanceof Color) || (left instanceof Cartesian4)) {
+        if ((left instanceof Color) || (left instanceof Cartesian2) || (left instanceof Cartesian3) || (left instanceof Cartesian4)) {
             return left;
         }
         return +left;
@@ -997,8 +1109,12 @@ define([
         var right = this._right.evaluate(frameState, feature);
         if ((right instanceof Color) && (left instanceof Color)) {
             return Color.add(left, right, ScratchStorage.getColor());
+        } else if ((right instanceof Cartesian2) && (left instanceof Cartesian2)) {
+            return Cartesian2.add(left, right, ScratchStorage.getCartesian2());
+        } else if ((right instanceof Cartesian3) && (left instanceof Cartesian3)) {
+            return Cartesian3.add(left, right, ScratchStorage.getCartesian3());
         } else if ((right instanceof Cartesian4) && (left instanceof Cartesian4)) {
-            return Cartesian4.add(left, right, ScratchStorage.getCartesian());
+            return Cartesian4.add(left, right, ScratchStorage.getCartesian4());
         }
         return left + right;
     };
@@ -1008,8 +1124,12 @@ define([
         var right = this._right.evaluate(frameState, feature);
         if ((right instanceof Color) && (left instanceof Color)) {
             return Color.subtract(left, right, ScratchStorage.getColor());
+        } else if ((right instanceof Cartesian2) && (left instanceof Cartesian2)) {
+            return Cartesian2.subtract(left, right, ScratchStorage.getCartesian2());
+        } else if ((right instanceof Cartesian3) && (left instanceof Cartesian3)) {
+            return Cartesian3.subtract(left, right, ScratchStorage.getCartesian3());
         } else if ((right instanceof Cartesian4) && (left instanceof Cartesian4)) {
-            return Cartesian4.subtract(left, right, ScratchStorage.getCartesian());
+            return Cartesian4.subtract(left, right, ScratchStorage.getCartesian4());
         }
         return left - right;
     };
@@ -1023,12 +1143,24 @@ define([
             return Color.multiplyByScalar(right, left, ScratchStorage.getColor());
         } else if ((left instanceof Color) && (typeof(right) === 'number')) {
             return Color.multiplyByScalar(left, right, ScratchStorage.getColor());
+        } else if ((right instanceof Cartesian2) && (left instanceof Cartesian2)) {
+            return Cartesian2.multiplyComponents(left, right, ScratchStorage.getCartesian2());
+        } else if ((right instanceof Cartesian2) && (typeof(left) === 'number')) {
+            return Cartesian2.multiplyByScalar(right, left, ScratchStorage.getCartesian2());
+        } else if ((left instanceof Cartesian2) && (typeof(right) === 'number')) {
+            return Cartesian2.multiplyByScalar(left, right, ScratchStorage.getCartesian2());
+        } else if ((right instanceof Cartesian3) && (left instanceof Cartesian3)) {
+            return Cartesian3.multiplyComponents(left, right, ScratchStorage.getCartesian3());
+        } else if ((right instanceof Cartesian3) && (typeof(left) === 'number')) {
+            return Cartesian3.multiplyByScalar(right, left, ScratchStorage.getCartesian3());
+        } else if ((left instanceof Cartesian3) && (typeof(right) === 'number')) {
+            return Cartesian3.multiplyByScalar(left, right, ScratchStorage.getCartesian3());
         } else if ((right instanceof Cartesian4) && (left instanceof Cartesian4)) {
-            return Cartesian4.multiplyComponents(left, right, ScratchStorage.getCartesian());
+            return Cartesian4.multiplyComponents(left, right, ScratchStorage.getCartesian4());
         } else if ((right instanceof Cartesian4) && (typeof(left) === 'number')) {
-            return Cartesian4.multiplyByScalar(right, left, ScratchStorage.getCartesian());
+            return Cartesian4.multiplyByScalar(right, left, ScratchStorage.getCartesian4());
         } else if ((left instanceof Cartesian4) && (typeof(right) === 'number')) {
-            return Cartesian4.multiplyByScalar(left, right, ScratchStorage.getCartesian());
+            return Cartesian4.multiplyByScalar(left, right, ScratchStorage.getCartesian4());
         }
         return left * right;
     };
@@ -1040,10 +1172,18 @@ define([
             return Color.divide(left, right, ScratchStorage.getColor());
         } else if ((left instanceof Color) && (typeof(right) === 'number')) {
             return Color.divideByScalar(left, right, ScratchStorage.getColor());
+        } else if ((right instanceof Cartesian2) && (left instanceof Cartesian2)) {
+            return Cartesian2.divideComponents(left, right, ScratchStorage.getCartesian2());
+        } else if ((left instanceof Cartesian2) && (typeof(right) === 'number')) {
+            return Cartesian2.divideByScalar(left, right, ScratchStorage.getCartesian2());
+        } else if ((right instanceof Cartesian3) && (left instanceof Cartesian3)) {
+            return Cartesian3.divideComponents(left, right, ScratchStorage.getCartesian3());
+        } else if ((left instanceof Cartesian3) && (typeof(right) === 'number')) {
+            return Cartesian3.divideByScalar(left, right, ScratchStorage.getCartesian3());
         } else if ((right instanceof Cartesian4) && (left instanceof Cartesian4)) {
-            return Cartesian4.divideComponents(left, right, ScratchStorage.getCartesian());
+            return Cartesian4.divideComponents(left, right, ScratchStorage.getCartesian4());
         } else if ((left instanceof Cartesian4) && (typeof(right) === 'number')) {
-            return Cartesian4.divideByScalar(left, right, ScratchStorage.getCartesian());
+            return Cartesian4.divideByScalar(left, right, ScratchStorage.getCartesian4());
         }
         return left / right;
     };
@@ -1053,10 +1193,12 @@ define([
         var right = this._right.evaluate(frameState, feature);
         if ((right instanceof Color) && (left instanceof Color)) {
             return Color.mod(left, right, ScratchStorage.getColor());
+        } else if ((right instanceof Cartesian2) && (left instanceof Cartesian2)) {
+            return Cartesian2.fromElements(left.x % right.x, left.y % right.y, ScratchStorage.getCartesian2());
+        } else if ((right instanceof Cartesian3) && (left instanceof Cartesian3)) {
+            return Cartesian3.fromElements(left.x % right.x, left.y % right.y, left.z % right.z, ScratchStorage.getCartesian3());
         } else if ((right instanceof Cartesian4) && (left instanceof Cartesian4)) {
-            // TODO : make mod a built-in Cartesian function?
-            // TODO : modByScalar?
-            return Cartesian4.fromElements(left.x % right.x, left.y % right.y, left.z % right.z, left.w % right.w, ScratchStorage.getCartesian());
+            return Cartesian4.fromElements(left.x % right.x, left.y % right.y, left.z % right.z, left.w % right.w, ScratchStorage.getCartesian4());
         }
         return left % right;
     };
@@ -1064,10 +1206,11 @@ define([
     Node.prototype._evaluateEqualsStrict = function(frameState, feature) {
         var left = this._left.evaluate(frameState, feature);
         var right = this._right.evaluate(frameState, feature);
-        if ((right instanceof Color) && (left instanceof Color)) {
-            return Color.equals(left, right);
-        } else if ((right instanceof Cartesian4) && (left instanceof Cartesian4)) {
-            return Cartesian4.equals(left, right);
+        if ((right instanceof Color) && (left instanceof Color) ||
+            (right instanceof Cartesian2) && (left instanceof Cartesian2) ||
+            (right instanceof Cartesian3) && (left instanceof Cartesian3) ||
+            (right instanceof Cartesian4) && (left instanceof Cartesian4)) {
+            return left.equals(right);
         }
         return left === right;
     };
@@ -1075,10 +1218,11 @@ define([
     Node.prototype._evaluateEquals = function(frameState, feature) {
         var left = this._left.evaluate(frameState, feature);
         var right = this._right.evaluate(frameState, feature);
-        if ((right instanceof Color) && (left instanceof Color)) {
-            return Color.equals(left, right);
-        } else if ((right instanceof Cartesian4) && (left instanceof Cartesian4)) {
-            return Cartesian4.equals(left, right);
+        if ((right instanceof Color) && (left instanceof Color) ||
+            (right instanceof Cartesian2) && (left instanceof Cartesian2) ||
+            (right instanceof Cartesian3) && (left instanceof Cartesian3) ||
+            (right instanceof Cartesian4) && (left instanceof Cartesian4)) {
+            return left.equals(right);
         }
 
         // Specifically want to do an abstract equality comparison (==) instead of a strict equality comparison (===)
@@ -1089,10 +1233,11 @@ define([
     Node.prototype._evaluateNotEqualsStrict = function(frameState, feature) {
         var left = this._left.evaluate(frameState, feature);
         var right = this._right.evaluate(frameState, feature);
-        if ((right instanceof Color) && (left instanceof Color)) {
-            return !Color.equals(left, right);
-        } else if ((right instanceof Cartesian4) && (left instanceof Cartesian4)) {
-            return !Cartesian4.equals(left, right);
+        if ((right instanceof Color) && (left instanceof Color) ||
+            (right instanceof Cartesian2) && (left instanceof Cartesian2) ||
+            (right instanceof Cartesian3) && (left instanceof Cartesian3) ||
+            (right instanceof Cartesian4) && (left instanceof Cartesian4)) {
+            return !left.equals(right);
         }
         return left !== right;
     };
@@ -1100,10 +1245,11 @@ define([
     Node.prototype._evaluateNotEquals = function(frameState, feature) {
         var left = this._left.evaluate(frameState, feature);
         var right = this._right.evaluate(frameState, feature);
-        if ((right instanceof Color) && (left instanceof Color)) {
-            return !Color.equals(left, right);
-        } else if ((right instanceof Cartesian4) && (left instanceof Cartesian4)) {
-            return !Cartesian4.equals(left, right);
+        if ((right instanceof Color) && (left instanceof Color) ||
+            (right instanceof Cartesian2) && (left instanceof Cartesian2) ||
+            (right instanceof Cartesian3) && (left instanceof Cartesian3) ||
+            (right instanceof Cartesian4) && (left instanceof Cartesian4)) {
+            return !left.equals(right);
         }
         // Specifically want to do an abstract inequality comparison (!=) instead of a strict inequality comparison (!==)
         // so that cases like "5 != '5'" return false. Tell jsHint to ignore this line.
@@ -1206,7 +1352,7 @@ define([
 
     Node.prototype._evaluateToString = function(frameState, feature) {
         var left = this._left.evaluate(frameState, feature);
-        if ((left instanceof RegExp) || (left instanceof Color) || (left instanceof Cartesian4)) {
+        if ((left instanceof RegExp) || (left instanceof Color) || (left instanceof Cartesian2) || (left instanceof Cartesian3) || (left instanceof Cartesian4)) {
             return String(left);
         }
         //>>includeStart('debug', pragmas.debug);
@@ -1289,7 +1435,7 @@ define([
         return expressions;
     }
 
-    Node.prototype.getShaderExpression = function(attributePrefix, shaderState, parent) {
+    Node.prototype.getShaderExpression = function(attributePrefix, shaderState) {
         var color;
         var left;
         var right;
@@ -1303,7 +1449,7 @@ define([
                 // Left can be an array if the type is LITERAL_COLOR or LITERAL_VECTOR
                 left = getExpressionArray(this._left, attributePrefix, shaderState);
             } else {
-                left = this._left.getShaderExpression(attributePrefix, shaderState, this);
+                left = this._left.getShaderExpression(attributePrefix, shaderState);
             }
             if (!defined(left)) {
                 // If the left side is not valid shader code, then the expression is not valid
@@ -1312,7 +1458,7 @@ define([
         }
 
         if (defined(this._right)) {
-            right = this._right.getShaderExpression(attributePrefix, shaderState, this);
+            right = this._right.getShaderExpression(attributePrefix, shaderState);
             if (!defined(right)) {
                 // If the right side is not valid shader code, then the expression is not valid
                 return undefined;
@@ -1320,7 +1466,7 @@ define([
         }
 
         if (defined(this._test)) {
-            test = this._test.getShaderExpression(attributePrefix, shaderState, this);
+            test = this._test.getShaderExpression(attributePrefix, shaderState);
             if (!defined(test)) {
                 // If the test is not valid shader code, then the expression is not valid
                 return undefined;
@@ -1431,15 +1577,8 @@ define([
             case ExpressionNodeType.LITERAL_NUMBER:
                 return numberToString(value);
             case ExpressionNodeType.LITERAL_STRING:
-                // Check if parent is of type MEMBER. Otherwise it is not possible to know whether 'red', 'green', and 'blue'
-                // refer to CSS strings or component accessors.
-                if (defined(parent) && (parent._type === ExpressionNodeType.MEMBER)) {
-                    if (value === 'red' || value === 'green' || value === 'blue' || value === 'alpha' ||
-                        value === 'x' || value === 'y' || value === 'z' || value === 'w') {
-                        return value;
-                    }
-                }
-                // Check for css color strings
+                // The only supported strings are css color strings
+                // ['red'], ['x'], and equivalent getters/setters are not supported
                 color = Color.fromCssColorString(value, scratchColor);
                 if (defined(color)) {
                     return colorToVec3(color);
