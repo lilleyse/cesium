@@ -1,4 +1,5 @@
 define([
+        '../Core/arraySlice',
         '../Core/Cartesian2',
         '../Core/Cartesian3',
         '../Core/Cartesian4',
@@ -20,6 +21,7 @@ define([
         '../Core/Plane',
         '../Core/PrimitiveType',
         '../Core/RuntimeError',
+        '../Core/TaskProcessor',
         '../Core/Transforms',
         '../Renderer/Buffer',
         '../Renderer/BufferUsage',
@@ -40,6 +42,7 @@ define([
         './SceneMode',
         './ShadowMode'
     ], function(
+        arraySlice,
         Cartesian2,
         Cartesian3,
         Cartesian4,
@@ -61,6 +64,7 @@ define([
         Plane,
         PrimitiveType,
         RuntimeError,
+        TaskProcessor,
         Transforms,
         Buffer,
         BufferUsage,
@@ -87,6 +91,13 @@ define([
     if (!FeatureDetection.supportsTypedArrays()) {
         return {};
     }
+
+    var DecodingState = {
+        NEEDS_DECODE : 0,
+        DECODING : 1,
+        READY : 2,
+        FAILED : 3
+    };
 
     /**
      * Represents the contents of a
@@ -126,6 +137,13 @@ define([
         this._hasColors = false;
         this._hasNormals = false;
         this._hasBatchIds = false;
+
+        // Draco
+        this._decodingState = DecodingState.READY;
+        this._dequantizeInShader = false;
+        this._isQuantizedDraco = false;
+        this._isOctEncodedDraco = false;
+        this._octEncodedRange = 0.0;
 
         // Use per-point normals to hide back-facing points.
         this.backFaceCulling = false;
@@ -372,10 +390,6 @@ define([
             content._quantizedVolumeOffset = Cartesian3.unpack(quantizedVolumeOffset);
         }
 
-        if (!defined(positions)) {
-            throw new RuntimeError('Either POSITION or POSITION_QUANTIZED must be defined.');
-        }
-
         // Get the colors
         var colors;
         var isTranslucent = false;
@@ -396,8 +410,6 @@ define([
             // Use a default constant color
             content._constantColor = Color.clone(Color.DARKGRAY, content._constantColor);
         }
-
-        content._isTranslucent = isTranslucent;
 
         // Get the normals
         var normals;
@@ -427,9 +439,66 @@ define([
             content._batchTable = new Cesium3DTileBatchTable(content, batchLength, batchTableJson, batchTableBinary);
         }
 
+        var hasPositions = defined(positions);
+        var hasColors = defined(colors);
+        var hasNormals = defined(normals);
+        var hasBatchIds = defined(batchIds);
+
+        // Get the draco buffer and semantics
+        var draco = featureTableJson.DRACO;
+        var dracoBuffer;
+        var dracoSemantics;
+        var isQuantizedDraco = false;
+        var isOctEncodedDraco = false;
+        if (defined(draco)) {
+            dracoSemantics = draco.semantics;
+            var dracoByteOffset = draco.byteOffset;
+            var dracoByteLength = draco.byteLength;
+            if (!defined(dracoSemantics) || !defined(dracoByteOffset) || !defined(dracoByteLength)) {
+                throw new RuntimeError('DRACO.semantics, DRACO.byteOffset, and DRACO.byteLength must be defined');
+            }
+
+            var dracoHasPositions = dracoSemantics.indexOf('POSITION') >= 0;
+            var dracoHasRGB = dracoSemantics.indexOf('RGB') >= 0;
+            var dracoHasRGBA = dracoSemantics.indexOf('RGBA') >= 0;
+            var dracoHasColors = dracoHasRGB || dracoHasRGBA;
+            var dracoHasNormals = dracoSemantics.indexOf('NORMAL') >= 0;
+            var dracoHasBatchIds = dracoSemantics.indexOf('BATCH_ID') >= 0;
+            dracoBuffer = arraySlice(featureTableBinary, dracoByteOffset, dracoByteOffset + dracoByteLength);
+
+            if (dracoHasPositions) {
+                isQuantized = false;
+                isQuantizedDraco = content._dequantizeInShader;
+                hasPositions = true;
+            }
+            if (dracoHasRGBA) {
+                isTranslucent = true;
+            } else if (dracoHasRGB) {
+                isTranslucent = false;
+            }
+            if (dracoHasColors) {
+                isRGB565 = false;
+                hasColors = true;
+            }
+            if (dracoHasNormals) {
+                isOctEncoded16P = false;
+                isOctEncodedDraco = content._dequantizeInShader;
+                hasNormals = true;
+            }
+            if (dracoHasBatchIds) {
+                hasBatchIds = true;
+            }
+
+            content._decodingState = DecodingState.NEEDS_DECODE;
+        }
+
+        if (!hasPositions) {
+            throw new RuntimeError('Either POSITION or POSITION_QUANTIZED must be defined.');
+        }
+
         // If points are not batched and there are per-point properties, use these properties for styling purposes
         var styleableProperties;
-        if (!defined(batchIds) && defined(batchTableBinary)) {
+        if (!hasBatchIds && defined(batchTableBinary)) {
             styleableProperties = Cesium3DTileBatchTable.getBinaryProperties(pointsLength, batchTableJson, batchTableBinary);
 
             // WebGL does not support UNSIGNED_INT, INT, or DOUBLE vertex attributes. Convert these to FLOAT.
@@ -451,15 +520,23 @@ define([
             colors : colors,
             normals : normals,
             batchIds : batchIds,
-            styleableProperties : styleableProperties
+            styleableProperties : styleableProperties,
+            draco : {
+                buffer : dracoBuffer,
+                semantics : dracoSemantics,
+                dequantizeInShader : content._dequantizeInShader
+            }
         };
         content._pointsLength = pointsLength;
         content._isQuantized = isQuantized;
+        content._isQuantizedDraco = isQuantizedDraco;
         content._isOctEncoded16P = isOctEncoded16P;
+        content._isOctEncodedDraco = isOctEncodedDraco;
         content._isRGB565 = isRGB565;
-        content._hasColors = defined(colors);
-        content._hasNormals = defined(normals);
-        content._hasBatchIds = defined(batchIds);
+        content._isTranslucent = isTranslucent;
+        content._hasColors = hasColors;
+        content._hasNormals = hasNormals;
+        content._hasBatchIds = hasBatchIds;
 
         // Compute an approximation for base resolution in case it isn't given.
         // Assume a uniform distribution of points in cubical cells throughout the
@@ -471,6 +548,7 @@ define([
     }
 
     var scratchPointSizeAndTilesetTimeAndGeometricErrorAndDepthMultiplier = new Cartesian4();
+    var scratchQuantizedVolumeScaleAndOctEncodedRange = new Cartesian4();
 
     var positionLocation = 0;
     var colorLocation = 1;
@@ -490,7 +568,9 @@ define([
         var styleableProperties = parsedContent.styleableProperties;
         var hasStyleableProperties = defined(styleableProperties);
         var isQuantized = content._isQuantized;
+        var isQuantizedDraco = content._isQuantizedDraco;
         var isOctEncoded16P = content._isOctEncoded16P;
+        var isOctEncodedDraco = content._isOctEncodedDraco;
         var isRGB565 = content._isRGB565;
         var isTranslucent = content._isTranslucent;
         var hasColors = content._hasColors;
@@ -590,6 +670,16 @@ define([
                 offsetInBytes : 0,
                 strideInBytes : 0
             });
+        } else if (isQuantizedDraco) {
+            attributes.push({
+                index : positionLocation,
+                vertexBuffer : positionsVertexBuffer,
+                componentsPerAttribute : 3,
+                componentDatatype : ComponentDatatype.UNSIGNED_SHORT,
+                normalize : false, // Normalization is done in the shader based on quantizationBits
+                offsetInBytes : 0,
+                strideInBytes : 0
+            });
         } else {
             attributes.push({
                 index : positionLocation,
@@ -638,6 +728,17 @@ define([
                     offsetInBytes : 0,
                     strideInBytes : 0
                 });
+            } else if (isOctEncodedDraco) {
+                // TODO : depending on the quantizationBits we could probably use BYTE
+                attributes.push({
+                    index : normalLocation,
+                    vertexBuffer : normalsVertexBuffer,
+                    componentsPerAttribute : 2,
+                    componentDatatype : ComponentDatatype.UNSIGNED_SHORT,
+                    normalize : false,
+                    offsetInBytes : 0,
+                    strideInBytes : 0
+                });
             } else {
                 attributes.push({
                     index : normalLocation,
@@ -672,6 +773,13 @@ define([
             attributes : attributes
         });
 
+        if (!hasBatchTable) {
+            content._pickId = context.createPickId({
+                primitive : content._tileset,
+                content : content
+            });
+        }
+
         content._opaqueRenderState = RenderState.fromCache({
             depthTest : {
                 enabled : true
@@ -694,7 +802,7 @@ define([
             vertexArray : vertexArray,
             count : pointsLength,
             shaderProgram : undefined, // Updated in createShaders
-            uniformMap : undefined, // Updated in createShaders
+            uniformMap : undefined, // Update in createShaders
             renderState : isTranslucent ? content._translucentRenderState : content._opaqueRenderState,
             pass : isTranslucent ? Pass.TRANSLUCENT : Pass.CESIUM_3D_TILE,
             owner : content,
@@ -717,6 +825,128 @@ define([
         });
     }
 
+    function getMutableUniformFunction(mutableUniformDefinition) {
+        return function() {
+            return mutableUniformDefinition.value;
+        };
+    }
+
+    function createUniformMap(content, frameState, style) {
+        var hasStyle = defined(style);
+        var batchTable = content._batchTable;
+        var hasBatchTable = defined(batchTable);
+        var context = frameState.context;
+        var isQuantized = content._isQuantized;
+        var isQuantizedDraco = content._isQuantizedDraco;
+        var isOctEncodedDraco = content._isOctEncodedDraco;
+
+        var uniformMap = {
+            u_pointSizeAndTilesetTimeAndGeometricErrorAndDepthMultiplier : function() {
+                var scratch = scratchPointSizeAndTilesetTimeAndGeometricErrorAndDepthMultiplier;
+                scratch.x = content._attenuation ? content._maximumAttenuation : content._pointSize;
+                scratch.y = content._tileset.timeSinceLoad;
+
+                if (content._attenuation) {
+                    var geometricError = content.tile.geometricError;
+                    if (geometricError === 0) {
+                        geometricError = defined(content._baseResolution) ? content._baseResolution : content._baseResolutionApproximation;
+                    }
+                    var frustum = frameState.camera.frustum;
+                    var depthMultiplier;
+                    // Attenuation is maximumAttenuation in 2D/ortho
+                    if (frameState.mode === SceneMode.SCENE2D || frustum instanceof OrthographicFrustum) {
+                        depthMultiplier = Number.POSITIVE_INFINITY;
+                    } else {
+                        depthMultiplier = context.drawingBufferHeight / frameState.camera.frustum.sseDenominator;
+                    }
+
+                    scratch.z = geometricError * content._geometricErrorScale;
+                    scratch.w = depthMultiplier;
+                }
+
+                return scratch;
+            },
+            u_highlightColor : function() {
+                return content._highlightColor;
+            },
+            u_constantColor : function() {
+                return content._constantColor;
+            },
+            u_clippingPlanes : function() {
+                var clippingPlanes = content._tileset.clippingPlanes;
+                return (!defined(clippingPlanes) || !clippingPlanes.enabled) ? context.defaultTexture : clippingPlanes.texture;
+            },
+            u_clippingPlanesEdgeStyle : function() {
+                var clippingPlanes = content._tileset.clippingPlanes;
+                if (!defined(clippingPlanes)) {
+                    return Color.WHITE.withAlpha(0.0);
+                }
+
+                var style = Color.clone(clippingPlanes.edgeColor);
+                style.alpha = clippingPlanes.edgeWidth;
+                return style;
+            },
+            u_clippingPlanesMatrix : function() {
+                var clippingPlanes = content._tileset.clippingPlanes;
+                if (!defined(clippingPlanes)) {
+                    return Matrix4.IDENTITY;
+                }
+                return Matrix4.multiply(content._modelViewMatrix, clippingPlanes.modelMatrix, scratchClippingPlaneMatrix);
+            }
+        };
+
+        if (isQuantized || isQuantizedDraco || isOctEncodedDraco) {
+            uniformMap = combine(uniformMap, {
+                u_quantizedVolumeScaleAndOctEncodedRange : function() {
+                    var scratch = scratchQuantizedVolumeScaleAndOctEncodedRange;
+                    if (defined(content._quantizedVolumeScale)) {
+                        scratch.x = content._quantizedVolumeScale.x;
+                        scratch.y = content._quantizedVolumeScale.y;
+                        scratch.z = content._quantizedVolumeScale.z;
+                    }
+                    scratch.w = content._octEncodedRange;
+                    return scratch;
+                }
+            });
+        }
+
+        if (hasStyle) {
+            var mutables = style.mutables;
+            if (Object.keys(mutables).length > 0) {
+                var mutableUniforms = {};
+                for (var name in mutables) {
+                    if (mutables.hasOwnProperty(name)) {
+                        var mutableUniformDefinition = mutables[name];
+                        var mutableUniformName = 'u_mutable' + name;
+                        mutableUniforms[mutableUniformName] = getMutableUniformFunction(mutableUniformDefinition);
+                    }
+                }
+                uniformMap = combine(uniformMap, mutableUniforms);
+            }
+        }
+
+        var drawUniformMap = uniformMap;
+
+        if (hasBatchTable) {
+            drawUniformMap = batchTable.getUniformMapCallback()(uniformMap);
+        }
+
+        var pickUniformMap;
+
+        if (hasBatchTable) {
+            pickUniformMap = batchTable.getPickUniformMapCallback()(uniformMap);
+        } else {
+            pickUniformMap = combine(uniformMap, {
+                czm_pickColor : function() {
+                    return content._pickId.color;
+                }
+            });
+        }
+
+        content._drawCommand.uniformMap = drawUniformMap;
+        content._pickCommand.uniformMap = pickUniformMap;
+    }
+
     var defaultProperties = ['POSITION', 'COLOR', 'NORMAL', 'POSITION_ABSOLUTE'];
 
     function getStyleableProperties(source, properties) {
@@ -732,20 +962,15 @@ define([
         }
     }
 
-    function getGLSLType(type) {
+    function getGlslType(type) {
         switch (type) {
-            case 'bool': return 'bool';
-            case 'int': return 'int';
-            case 'uint': return 'uint';
-            case 'float': return 'float';
-            case 'double': return 'double';
+            case 'Boolean': return 'bool';
+            case 'Number': return 'float';
             case 'vec2': return 'vec2';
             case 'vec3': return 'vec3';
             case 'vec4': return 'vec4';
-            case 'Color': return 'vec4';
-            case 'RegExp': throw new RuntimeError('RegExp is not a supported type in the context of GLSL.');
         }
-        throw new RuntimeError('Cannot translate unknown data type into GLSL type.');
+        throw new RuntimeError('Invalid mutable type: "' + type + '"');
     }
 
     function getVertexAttribute(vertexArray, index) {
@@ -758,14 +983,26 @@ define([
         }
     }
 
-    function modifyStyleFunction(source) {
+    function modifyStyleFunction(source, mutables) {
+        var styleName;
+        var replaceName;
+
         // Replace occurrences of czm_tiles3d_style_DEFAULTPROPERTY
         var length = defaultProperties.length;
         for (var i = 0; i < length; ++i) {
             var property = defaultProperties[i];
-            var styleName = 'czm_tiles3d_style_' + property;
-            var replaceName = property.toLowerCase();
+            styleName = 'czm_tiles3d_style_' + property;
+            replaceName = property.toLowerCase();
             source = source.replace(new RegExp(styleName + '(\\W)', 'g'), replaceName + '$1');
+        }
+
+        // Replace occurences of czm_tiles3d_style_MUTABLENAME
+        for (var name in mutables) {
+            if (mutables.hasOwnProperty(name)) {
+                styleName = 'czm_tiles3d_style_' + name;
+                replaceName = 'u_mutable' + name;
+                source = source.replace(new RegExp(styleName + '(\\W)', 'g'), replaceName + '$1');
+            }
         }
 
         // Edit the function header to accept the point position, color, and normal
@@ -776,13 +1013,16 @@ define([
         var i;
         var name;
         var attribute;
+        var mutables;
 
         var context = frameState.context;
         var batchTable = content._batchTable;
         var hasBatchTable = defined(batchTable);
         var hasStyle = defined(style);
         var isQuantized = content._isQuantized;
+        var isQuantizedDraco = content._isQuantizedDraco;
         var isOctEncoded16P = content._isOctEncoded16P;
+        var isOctEncodedDraco = content._isOctEncodedDraco;
         var isRGB565 = content._isRGB565;
         var isTranslucent = content._isTranslucent;
         var hasColors = content._hasColors;
@@ -804,6 +1044,7 @@ define([
         }
 
         if (hasStyle) {
+            mutables = style.mutables;
             var shaderState = {
                 translucent : false
             };
@@ -827,22 +1068,25 @@ define([
 
         if (hasColorStyle) {
             getStyleableProperties(colorStyleFunction, styleableProperties);
-            colorStyleFunction = modifyStyleFunction(colorStyleFunction);
+            colorStyleFunction = modifyStyleFunction(colorStyleFunction, mutables);
         }
         if (hasShowStyle) {
             getStyleableProperties(showStyleFunction, styleableProperties);
-            showStyleFunction = modifyStyleFunction(showStyleFunction);
+            showStyleFunction = modifyStyleFunction(showStyleFunction, mutables);
         }
         if (hasPointSizeStyle) {
             getStyleableProperties(pointSizeStyleFunction, styleableProperties);
-            pointSizeStyleFunction = modifyStyleFunction(pointSizeStyleFunction);
+            pointSizeStyleFunction = modifyStyleFunction(pointSizeStyleFunction, mutables);
         }
 
         var usesColorSemantic = styleableProperties.indexOf('COLOR') >= 0;
         var usesNormalSemantic = styleableProperties.indexOf('NORMAL') >= 0;
 
         // Split default properties from user properties
-        var userProperties = styleableProperties.filter(function(property) { return defaultProperties.indexOf(property) === -1 && !(hasStyle && (property in style.mutables)); });
+        var userProperties = styleableProperties.filter(function(property) {
+            return defaultProperties.indexOf(property) === -1 &&
+                   !(defined(mutables) && (defined(mutables[property])));
+        });
 
         if (usesNormalSemantic && !hasNormals) {
             throw new RuntimeError('Style references the NORMAL semantic but the point cloud does not have normals');
@@ -902,19 +1146,7 @@ define([
             attributeLocations[attributeName] = attribute.location;
         }
 
-        var uniformMap = {
-            u_pointSizeAndTilesetTime : function() {
-                scratchPointSizeAndTilesetTime.x = content._pointSize;
-                scratchPointSizeAndTilesetTime.y = content._tileset.timeSinceLoad;
-                return scratchPointSizeAndTilesetTime;
-            },
-            u_highlightColor : function() {
-                return content._highlightColor;
-            },
-            u_constantColor : function() {
-                return content._constantColor;
-            }
-        };
+        createUniformMap(content, frameState, style);
 
         var vs = 'attribute vec3 a_position; \n' +
                  'varying vec4 v_color; \n' +
@@ -929,14 +1161,11 @@ define([
                   'float u_depthMultiplier; \n';
         }
 
-        if (hasStyle) {
-            for (var mutableVariable in style.mutables) {
-                var mutableUniformName = 'u_mutable' + mutableVariable;
-                var mutableUniformDefiniton = style.mutables[mutableVariable];
-                vs += 'uniform ' + getGLSLType(mutableUniformDefiniton.type) + ' ' + mutableUniformName + '; \n';
-                uniformMap[mutableUniformName] = function() {
-                    return mutableUniformDefiniton.value;
-                }
+        for (name in mutables) {
+            if (mutables.hasOwnProperty(name)) {
+                var mutableUniformName = 'u_mutable' + name;
+                var mutableUniformDefinition = mutables[name];
+                vs += 'uniform ' + getGlslType(mutableUniformDefinition.type) + ' ' + mutableUniformName + '; \n';
             }
         }
 
@@ -958,7 +1187,7 @@ define([
             }
         }
         if (hasNormals) {
-            if (isOctEncoded16P) {
+            if (isOctEncoded16P || isOctEncodedDraco) {
                 vs += 'attribute vec2 a_normal; \n';
             } else {
                 vs += 'attribute vec3 a_normal; \n';
@@ -969,13 +1198,8 @@ define([
             vs += 'attribute float a_batchId; \n';
         }
 
-        if (isQuantized) {
-            vs += 'uniform vec3 u_quantizedVolumeScale; \n';
-            uniformMap = combine(uniformMap, {
-                u_quantizedVolumeScale : function() {
-                    return content._quantizedVolumeScale;
-                }
-            });
+        if (isQuantized || isQuantizedDraco || isOctEncodedDraco) {
+            vs += 'uniform vec4 u_quantizedVolumeScaleAndOctEncodedRange; \n';
         }
 
         if (hasColorStyle) {
@@ -1019,8 +1243,8 @@ define([
             vs += '    vec4 color = u_constantColor; \n';
         }
 
-        if (isQuantized) {
-            vs += '    vec3 position = a_position * u_quantizedVolumeScale; \n';
+        if (isQuantized || isQuantizedDraco) {
+            vs += '    vec3 position = a_position * u_quantizedVolumeScaleAndOctEncodedRange.xyz; \n';
         } else {
             vs += '    vec3 position = a_position; \n';
         }
@@ -1029,6 +1253,9 @@ define([
         if (hasNormals) {
             if (isOctEncoded16P) {
                 vs += '    vec3 normal = czm_octDecode(a_normal); \n';
+            } else if (isOctEncodedDraco) {
+                // Draco oct-encoding decodes to zxy order
+                vs += '    vec3 normal = czm_octDecode(a_normal, u_quantizedVolumeScaleAndOctEncodedRange.w).zxy; \n';
             } else {
                 vs += '    vec3 normal = a_normal; \n';
             }
@@ -1079,14 +1306,6 @@ define([
         }
 
         vs += '} \n';
-
-        if (hasStyle) {
-            for (var mutable in style.mutables) {
-                var styleName = 'czm_tiles3d_style_' + mutable;
-                var replaceName = 'u_mutable' + mutable;
-                vs = vs.replace(new RegExp(styleName + '(\\W)', 'g'), replaceName + '$1');
-            }
-        }
 
         var fs = 'varying vec4 v_color; \n';
 
@@ -1151,27 +1370,6 @@ define([
             fragmentShaderSource : pickFS,
             attributeLocations : attributeLocations
         });
-
-        if (hasBatchTable) {
-            drawCommand.uniformMap = batchTable.getUniformMapCallback()(uniformMap);
-        } else {
-            drawCommand.uniformMap = uniformMap;
-        }
-
-        if (hasBatchTable) {
-            pickCommand.uniformMap = batchTable.getPickUniformMapCallback()(uniformMap);
-        } else {
-            content._pickId = context.createPickId({
-                primitive : content._tileset,
-                content : content
-            });
-
-            pickCommand.uniformMap = combine(uniformMap, {
-                czm_pickColor : function() {
-                    return content._pickId.color;
-                }
-            });
-        }
 
         try {
             // Check if the shader compiles correctly. If not there is likely a syntax error with the style.
@@ -1250,17 +1448,88 @@ define([
     var scratchComputedTranslation = new Cartesian4();
     var scratchComputedMatrixIn2D = new Matrix4();
 
+    var maxDecodingConcurrency = Math.max(FeatureDetection.hardwareConcurrency - 1, 1);
+    var decoderTaskProcessor;
+    function getDecoderTaskProcessor() {
+        if (!defined(decoderTaskProcessor)) {
+            decoderTaskProcessor = new TaskProcessor('decodeDracoPointCloud', maxDecodingConcurrency, {
+                modulePath : 'ThirdParty/draco_wasm_wrapper.js',
+                wasmBinaryFile : 'ThirdParty/draco_decoder.wasm',
+                fallbackModulePath : 'ThirdParty/draco_decoder.js'
+            });
+        }
+
+        return decoderTaskProcessor;
+    }
+
+    function runDecoderTaskProcessor(draco) {
+        if (FeatureDetection.isInternetExplorer()) {
+            return when.reject(new RuntimeError('Draco decoding is not currently supported in Internet Explorer.'));
+        }
+
+        var decoderTaskProcessor = getDecoderTaskProcessor();
+        var promise = decoderTaskProcessor.scheduleTask(draco, [draco.buffer.buffer]);
+        if (!defined(promise)) {
+            return;
+        }
+
+        return promise;
+    }
+
+    function decodeDraco(content, context) {
+        if (content._decodingState === DecodingState.READY) {
+            return false;
+        }
+        if (content._decodingState === DecodingState.NEEDS_DECODE) {
+            var parsedContent = content._parsedContent;
+            var draco = parsedContent.draco;
+            var decodePromise = runDecoderTaskProcessor(draco, context);
+            if (defined(decodePromise)) {
+                content._decodingState = DecodingState.DECODING;
+                decodePromise.then(function(result) {
+                    content._decodingState = DecodingState.READY;
+                    var decodedPositions = defined(result.POSITION) ? result.POSITION.buffer : undefined;
+                    var decodedRgb = defined(result.RGB) ? result.RGB.buffer : undefined;
+                    var decodedRgba = defined(result.RGBA) ? result.RGBA.buffer : undefined;
+                    var decodedNormals = defined(result.NORMAL) ? result.NORMAL.buffer : undefined;
+                    var decodedBatchIds = defined(result.BATCH_ID) ? result.BATCH_ID.buffer : undefined;
+                    parsedContent.positions = defaultValue(decodedPositions, parsedContent.positions);
+                    parsedContent.colors = defaultValue(defaultValue(decodedRgba, decodedRgb), parsedContent.colors);
+                    parsedContent.normals = defaultValue(decodedNormals, parsedContent.normals);
+                    parsedContent.batchIds = defaultValue(decodedBatchIds, parsedContent.batchIds);
+                    if (content._isQuantizedDraco) {
+                        var quantization = result.POSITION.quantization;
+                        var scale = quantization.range / (1 << quantization.quantizationBits);
+                        content._quantizedVolumeScale = Cartesian3.fromElements(scale, scale, scale);
+                        content._quantizedVolumeOffset = Cartesian3.unpack(quantization.minValues);
+                    }
+                    if (content._isOctEncodedDraco) {
+                        content._octEncodedRange = (1 << result.NORMAL.quantization.quantizationBits) - 1.0;
+                    }
+                }).otherwise(function(error) {
+                    content._decodingState = DecodingState.FAILED;
+                    content._readyPromise.reject(error);
+                });
+            }
+        }
+        return true;
+    }
+
     /**
      * @inheritdoc Cesium3DTileContent#update
      */
     PointCloud3DTileContent.prototype.update = function(tileset, frameState) {
+        var context = frameState.context;
+        var decoding = decodeDraco(this, context);
+        if (decoding) {
+            return;
+        }
+
         var modelMatrix = this._tile.computedTransform;
         var modelMatrixChanged = !Matrix4.equals(this._modelMatrix, modelMatrix);
         var updateModelMatrix = modelMatrixChanged || this._mode !== frameState.mode;
 
         this._mode = frameState.mode;
-
-        var context = frameState.context;
 
         if (!defined(this._drawCommand)) {
             createResources(this, frameState);
